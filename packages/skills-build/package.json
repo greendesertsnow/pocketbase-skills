@@ -1,0 +1,11 @@
+{
+	"name": "skills-build",
+	"version": "1.0.0",
+	"type": "module",
+	"description": "Build tools for PocketBase agent skills",
+	"main": "src/build.js",
+	"scripts": {
+		"build": "node src/build.js",
+		"validate": "node src/validate.js"
+	}
+}

@@ -1,0 +1,40 @@
+{
+	"name": "pocketbase-agent-skills",
+	"version": "1.0.0",
+	"author": "Community",
+	"license": "MIT",
+	"description": "Agent skills for PocketBase development best practices",
+	"keywords": [
+		"pocketbase",
+		"agent-skills",
+		"claude",
+		"cursor",
+		"copilot",
+		"ai",
+		"llm",
+		"backend",
+		"sqlite",
+		"realtime"
+	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/greendesertsnow/pocketbase-skills.git"
+	},
+	"homepage": "https://github.com/greendesertsnow/pocketbase-skills",
+	"bugs": {
+		"url": "https://github.com/greendesertsnow/pocketbase-skills/issues"
+	},
+	"scripts": {
+		"build": "node packages/skills-build/src/build.js",
+		"validate": "node packages/skills-build/src/validate.js",
+		"format": "biome format --write .",
+		"format:check": "biome format .",
+		"lint": "biome lint --write .",
+		"lint:check": "biome lint .",
+		"check": "biome check --write .",
+		"ci:check": "biome ci ."
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.0.0"
+	}
+}

@@ -1,0 +1,27 @@
+# PocketBase Agent Skills
+
+> Agent Skills for PocketBase development best practices
+
+This repository contains Agent Skills following the [agentskills.io](https://agentskills.io/) format.
+
+## Skills
+
+- [pocketbase-best-practices](skills/pocketbase-best-practices/SKILL.md): 42 rules for PocketBase development covering collection design, API rules, authentication, SDK usage, query optimization, realtime, file handling, and deployment.
+
+## Installation
+
+```
+npx skills add greendesertsnow/pocketbase-skills
+```
+
+## Documentation
+
+- Skill instructions: skills/pocketbase-best-practices/SKILL.md
+- Full rules reference: skills/pocketbase-best-practices/AGENTS.md
+- Individual rules: skills/pocketbase-best-practices/rules/
+
+## Links
+
+- PocketBase docs: https://pocketbase.io/docs/
+- PocketBase GitHub: https://github.com/pocketbase/pocketbase
+- Agent Skills format: https://agentskills.io/

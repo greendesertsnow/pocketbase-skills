@@ -1,0 +1,13 @@
+{
+	"version": "1.0.0",
+	"organization": "Community",
+	"date": "January 2026",
+	"abstract": "Comprehensive PocketBase development best practices and performance optimization guide. Contains rules across 8 categories, prioritized by impact from critical (collection design, API rules, authentication) to incremental (production deployment). Each rule includes detailed explanations, incorrect vs. correct code examples, and specific guidance to help AI agents generate better PocketBase code.",
+	"references": [
+		"https://pocketbase.io/docs/",
+		"https://github.com/pocketbase/pocketbase",
+		"https://github.com/pocketbase/js-sdk",
+		"https://pocketbase.io/docs/api-records/",
+		"https://pocketbase.io/docs/api-rules-and-filters/"
+	]
+}

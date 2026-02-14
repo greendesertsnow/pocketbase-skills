@@ -69,9 +69,10 @@ async function getPostsWithAuthorsBatch() {
   // Collect unique author IDs
   const authorIds = [...new Set(posts.items.map(p => p.author))];
 
-  // Single query for all authors
+  // Single query for all authors (use pb.filter for safe binding)
+  const filter = authorIds.map(id => pb.filter('id = {:id}', { id })).join(' || ');
   const authors = await pb.collection('users').getList(1, authorIds.length, {
-    filter: authorIds.map(id => `id = "${id}"`).join(' || ')
+    filter
   });
 
   // Create lookup map

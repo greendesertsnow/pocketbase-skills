@@ -90,7 +90,7 @@ async function getAllPostsEfficiently() {
 
 // Or use getFullList with batch option
 const allPosts = await pb.collection('posts').getFullList({
-  batch: 200,  // Records per request (default 500)
+  batch: 200,  // Records per request (default 200)
   sort: '-created'
 });
 ```

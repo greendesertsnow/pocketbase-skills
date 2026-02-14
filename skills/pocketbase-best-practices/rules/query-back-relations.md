@@ -117,8 +117,8 @@ posts.forEach(post => {
 **Important considerations:**
 
 ```javascript
-// Back-relations return arrays (even for single relations)
-// unless the relation field has a UNIQUE index
+// Back-relations always return arrays, even if the relation field
+// is marked as single (maxSelect: 1)
 
 // Limited to 1000 records per back-relation
 // For more, use separate paginated query

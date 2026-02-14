@@ -7,7 +7,7 @@ tags: production, sqlite, database, performance
 
 ## Optimize SQLite for Production
 
-PocketBase uses SQLite. Understanding its characteristics helps optimize performance and avoid common pitfalls.
+PocketBase uses SQLite with optimized defaults. Understanding its characteristics helps optimize performance and avoid common pitfalls. PocketBase uses two separate databases: `data.db` (application data) and `auxiliary.db` (logs and ephemeral data), which reduces write contention.
 
 **Incorrect (ignoring SQLite characteristics):**
 
@@ -97,6 +97,22 @@ async function getPostWithContent(id) {
 }
 ```
 
+**PocketBase default PRAGMA settings:**
+
+PocketBase already configures optimal SQLite settings. You do not need to set these manually unless using a custom SQLite driver:
+
+```sql
+PRAGMA busy_timeout       = 10000;  -- Wait 10s for locks instead of failing immediately
+PRAGMA journal_mode       = WAL;    -- Write-Ahead Logging: concurrent reads during writes
+PRAGMA journal_size_limit = 200000000;  -- Limit WAL file to ~200MB
+PRAGMA synchronous        = NORMAL; -- Balanced durability/performance (safe with WAL)
+PRAGMA foreign_keys       = ON;     -- Enforce relation integrity
+PRAGMA temp_store         = MEMORY; -- Temp tables in memory (faster sorts/joins)
+PRAGMA cache_size         = -32000; -- 32MB page cache
+```
+
+WAL mode is the most impactful setting -- it allows multiple concurrent readers while a single writer is active, which is critical for PocketBase's concurrent API request handling.
+
 **Index optimization:**
 
 ```sql
@@ -146,10 +162,41 @@ Consider migrating from single PocketBase if:
 - Complex transactions across tables
 - Multi-region deployment required
 
+**Custom SQLite driver (advanced):**
+
+PocketBase supports custom SQLite drivers via `DBConnect`. The CGO driver (`mattn/go-sqlite3`) can offer better performance for some workloads and enables extensions like ICU and FTS5. This requires a custom PocketBase build:
+
+```go
+// main.go (custom PocketBase build with CGO driver)
+package main
+
+import (
+    "github.com/pocketbase/dbx"
+    "github.com/pocketbase/pocketbase"
+    _ "github.com/mattn/go-sqlite3"  // CGO SQLite driver
+)
+
+func main() {
+    app := pocketbase.NewWithConfig(pocketbase.Config{
+        // Called twice: once for data.db, once for auxiliary.db
+        DBConnect: func(dbPath string) (*dbx.DB, error) {
+            return dbx.Open("sqlite3", dbPath)
+        },
+    })
+
+    if err := app.Start(); err != nil {
+        panic(err)
+    }
+}
+// Build with: CGO_ENABLED=1 go build
+```
+
+Note: CGO requires C compiler toolchain and cannot be cross-compiled as easily as pure Go.
+
 **Scaling options:**
 1. **Read replicas**: Litestream for SQLite replication
 2. **Sharding**: Multiple PocketBase instances by tenant/feature
 3. **Caching**: Redis/Memcached for read-heavy loads
 4. **Alternative backend**: If requirements exceed SQLite, evaluate PostgreSQL-based frameworks
 
-Reference: [SQLite Performance](https://www.sqlite.org/speed.html)
+Reference: [PocketBase Going to Production](https://pocketbase.io/docs/going-to-production/)

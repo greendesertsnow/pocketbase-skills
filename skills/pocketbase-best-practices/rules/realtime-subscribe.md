@@ -150,4 +150,33 @@ pb.collection('posts').unsubscribe();
 pb.realtime.unsubscribe();
 ```
 
+**Performance considerations:**
+
+```javascript
+// Prefer specific record subscriptions over collection-wide when possible.
+// subscribe('*') checks ListRule for every connected client on each change.
+// subscribe(recordId) checks ViewRule -- fewer records to evaluate.
+
+// For high-traffic collections, subscribe to specific records:
+await pb.collection('orders').subscribe(orderId, handleOrderUpdate);
+// Instead of: pb.collection('orders').subscribe('*', handleAllOrders);
+
+// Use subscription options to reduce payload size (SDK v0.21+):
+await pb.collection('posts').subscribe('*', handleChange, {
+  fields: 'id,title,updated',  // Only receive specific fields
+  expand: 'author',            // Include expanded relations
+  filter: 'status = "published"'  // Only receive matching records
+});
+```
+
+**Subscription scope guidelines:**
+
+| Scenario | Recommended Scope |
+|----------|-------------------|
+| Watching a specific document | `subscribe(recordId)` |
+| Chat room messages | `subscribe('*')` with filter for room |
+| User notifications | `subscribe('*')` with filter for user |
+| Admin dashboard | `subscribe('*')` (need to see all) |
+| High-frequency data (IoT) | `subscribe(recordId)` per device |
+
 Reference: [PocketBase Realtime](https://pocketbase.io/docs/api-realtime/)

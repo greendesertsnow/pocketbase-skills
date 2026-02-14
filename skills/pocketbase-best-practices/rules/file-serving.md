@@ -141,4 +141,46 @@ const postsWithUrls = posts.items.map(post => ({
 | `WxHb` | Crop from bottom |
 | `WxHf` | Force exact dimensions |
 
+**Performance and caching:**
+
+```javascript
+// File URLs are effectively immutable (randomized filenames on upload).
+// This makes them ideal for aggressive caching.
+
+// Configure Cache-Control via reverse proxy (Nginx/Caddy):
+// location /api/files/ { add_header Cache-Control "public, immutable, max-age=86400"; }
+
+// Thumbnails are generated on first request and cached by PocketBase.
+// Pre-generate expected thumb sizes after upload to avoid cold-start latency:
+async function uploadWithThumbs(record, file) {
+  const updated = await pb.collection('posts').update(record.id, { image: file });
+
+  // Pre-warm thumbnail cache by requesting expected sizes
+  const sizes = ['100x100', '300x200', '800x600'];
+  await Promise.all(sizes.map(size =>
+    fetch(pb.files.getURL(updated, updated.image, { thumb: size }))
+  ));
+
+  return updated;
+}
+```
+
+**S3 file serving optimization:**
+
+When using S3 storage, PocketBase proxies all file requests through the server. For better performance with public files, serve directly from your S3 CDN:
+
+```javascript
+// Default: All file requests proxy through PocketBase
+const url = pb.files.getURL(record, record.image);
+// -> https://myapp.com/api/files/COLLECTION/ID/filename.jpg (proxied)
+
+// For public files with S3 + CDN, construct CDN URL directly:
+const cdnBase = 'https://cdn.myapp.com';  // Your S3 CDN domain
+const cdnUrl = `${cdnBase}/${record.collectionId}/${record.id}/${record.image}`;
+// Bypasses PocketBase, served directly from CDN edge
+
+// NOTE: This only works for public files (no access token needed).
+// Protected files must go through PocketBase for token validation.
+```
+
 Reference: [PocketBase Files](https://pocketbase.io/docs/files-handling/)

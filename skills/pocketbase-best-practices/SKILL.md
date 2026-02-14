@@ -81,6 +81,34 @@ metadata:
 - **deploy-reverse-proxy**: Put behind nginx/caddy in production
 - **deploy-sqlite-considerations**: Optimize SQLite for production workloads
 
+## Example Prompts
+
+Try these with your AI agent to see the skill in action:
+
+**Building a new feature:**
+- "Design a PocketBase schema for an e-commerce app with products, orders, and reviews"
+- "Implement OAuth2 login with Google and GitHub for my app"
+- "Build a real-time notification system with PocketBase subscriptions"
+- "Create a file upload form with image validation and thumbnail previews"
+
+**Fixing issues:**
+- "My list query is slow on 100k records -- optimize it"
+- "I'm getting 403 errors on my batch operations"
+- "Fix the N+1 query problem in my posts list that loads author data in a loop"
+- "My realtime subscriptions stop working after a few minutes"
+
+**Security review:**
+- "Review my API rules -- users should only access their own data"
+- "Set up proper access control: admins manage all content, users edit only their own"
+- "Are my authentication cookies configured securely for SSR?"
+- "Audit my collection rules for IDOR vulnerabilities"
+
+**Going to production:**
+- "Configure Nginx with HTTPS, rate limiting, and security headers for PocketBase"
+- "Set up automated backups for my PocketBase database"
+- "Optimize SQLite settings for a production workload with ~500 concurrent users"
+- "Deploy PocketBase with Docker Compose and Caddy"
+
 ## Detailed Rules
 
 Load the relevant category for complete rule documentation with code examples:

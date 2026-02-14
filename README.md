@@ -60,25 +60,86 @@ Contains rules across 8 categories, prioritized by impact.
 
 ## Usage
 
-Skills are automatically available once installed. The agent will use them when
-relevant tasks are detected.
+Skills are automatically available once installed. The agent will reference best practices when relevant PocketBase tasks are detected.
 
-**Examples:**
-
-```
-Help me design a PocketBase collection for a blog
-```
+### Schema & Collection Design
 
 ```
-Review my API rules for security issues
+Design a PocketBase schema for a multi-tenant SaaS app with organizations, members, and projects
 ```
 
 ```
-Set up OAuth2 authentication with Google
+I have a users collection and a posts collection. Set up the relations with proper cascade options
 ```
 
 ```
-Optimize my PocketBase queries
+Create a view collection that shows post counts per author with their latest post date
+```
+
+### Security & API Rules
+
+```
+Write API rules for a private notes app where users can only see their own notes
+```
+
+```
+Review my collection rules for security issues - I want admins to manage content but users to only edit their own
+```
+
+```
+Set up role-based access control with admin, editor, and viewer roles
+```
+
+### Authentication
+
+```
+Implement a complete login flow with email/password and Google OAuth2
+```
+
+```
+Add multi-factor authentication with OTP to my app's login
+```
+
+```
+Set up SSR authentication with SvelteKit using secure cookie handling
+```
+
+### SDK & Query Patterns
+
+```
+I'm getting N+1 query issues loading posts with author names. Fix it
+```
+
+```
+Implement infinite scroll with cursor-based pagination for a feed
+```
+
+```
+Create a batch operation to transfer funds between two accounts atomically
+```
+
+### Realtime
+
+```
+Build a live chat component in React with PocketBase realtime subscriptions
+```
+
+```
+Add reconnection handling to my realtime subscriptions with missed update sync
+```
+
+### Files & Deployment
+
+```
+Set up file uploads with client-side validation and thumbnail generation
+```
+
+```
+Configure Nginx as a reverse proxy for PocketBase with HTTPS and rate limiting
+```
+
+```
+Optimize my PocketBase SQLite database for production with proper indexes
 ```
 
 ## Skill Structure

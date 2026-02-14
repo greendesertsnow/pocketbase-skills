@@ -153,10 +153,13 @@ async function deletePostWithComments(postId) {
 ```
 
 **Batch operation limits:**
+- **Must be enabled first** in Dashboard > Settings > Application (disabled by default; returns 403 otherwise)
 - Operations execute in a single database transaction
 - All succeed or all rollback
 - Respects API rules for each operation
-- Maximum batch size depends on server configuration
+- Configurable limits: `maxRequests`, `timeout`, and `maxBodySize` (set in Dashboard)
+- **Avoid large file uploads** in batches over slow networks -- they block the entire transaction
+- Avoid custom hooks that call slow external APIs within batch operations
 
 **When to use batch:**
 

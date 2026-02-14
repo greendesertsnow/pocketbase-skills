@@ -99,10 +99,16 @@ async function getUserIdByEmail(email) {
 // getOne - fetch by record ID
 const post = await pb.collection('posts').getOne('abc123');
 
-// getFirstListItem - fetch by any filter
-const post = await pb.collection('posts').getFirstListItem('slug = "hello-world"');
-const user = await pb.collection('users').getFirstListItem('username = "john"');
-const order = await pb.collection('orders').getFirstListItem('orderNumber = 12345');
+// getFirstListItem - fetch by any filter (use pb.filter for safe binding)
+const post = await pb.collection('posts').getFirstListItem(
+  pb.filter('slug = {:slug}', { slug: 'hello-world' })
+);
+const user = await pb.collection('users').getFirstListItem(
+  pb.filter('username = {:name}', { name: 'john' })
+);
+const order = await pb.collection('orders').getFirstListItem(
+  pb.filter('orderNumber = {:num}', { num: 12345 })
+);
 ```
 
 **Error handling:**

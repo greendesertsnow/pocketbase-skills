@@ -120,8 +120,8 @@ posts.forEach(post => {
 **Important considerations:**
 
 ```javascript
-// Back-relations return arrays (even for single relations)
-// unless the relation field has a UNIQUE index
+// Back-relations always return arrays, even if the relation field
+// is marked as single (maxSelect: 1)
 
 // Limited to 1000 records per back-relation
 // For more, use separate paginated query
@@ -316,10 +316,13 @@ async function deletePostWithComments(postId) {
 ```
 
 **Batch operation limits:**
+- **Must be enabled first** in Dashboard > Settings > Application (disabled by default; returns 403 otherwise)
 - Operations execute in a single database transaction
 - All succeed or all rollback
 - Respects API rules for each operation
-- Maximum batch size depends on server configuration
+- Configurable limits: `maxRequests`, `timeout`, and `maxBodySize` (set in Dashboard)
+- **Avoid large file uploads** in batches over slow networks -- they block the entire transaction
+- Avoid custom hooks that call slow external APIs within batch operations
 
 **When to use batch:**
 
@@ -682,10 +685,16 @@ async function getUserIdByEmail(email) {
 // getOne - fetch by record ID
 const post = await pb.collection('posts').getOne('abc123');
 
-// getFirstListItem - fetch by any filter
-const post = await pb.collection('posts').getFirstListItem('slug = "hello-world"');
-const user = await pb.collection('users').getFirstListItem('username = "john"');
-const order = await pb.collection('orders').getFirstListItem('orderNumber = 12345');
+// getFirstListItem - fetch by any filter (use pb.filter for safe binding)
+const post = await pb.collection('posts').getFirstListItem(
+  pb.filter('slug = {:slug}', { slug: 'hello-world' })
+);
+const user = await pb.collection('users').getFirstListItem(
+  pb.filter('username = {:name}', { name: 'john' })
+);
+const order = await pb.collection('orders').getFirstListItem(
+  pb.filter('orderNumber = {:num}', { num: 12345 })
+);
 ```
 
 **Error handling:**
@@ -800,9 +809,10 @@ async function getPostsWithAuthorsBatch() {
   // Collect unique author IDs
   const authorIds = [...new Set(posts.items.map(p => p.author))];
 
-  // Single query for all authors
+  // Single query for all authors (use pb.filter for safe binding)
+  const filter = authorIds.map(id => pb.filter('id = {:id}', { id })).join(' || ');
   const authors = await pb.collection('users').getList(1, authorIds.length, {
-    filter: authorIds.map(id => `id = "${id}"`).join(' || ')
+    filter
   });
 
   // Create lookup map
@@ -954,7 +964,7 @@ async function getAllPostsEfficiently() {
 
 // Or use getFullList with batch option
 const allPosts = await pb.collection('posts').getFullList({
-  batch: 200,  // Records per request (default 500)
+  batch: 200,  // Records per request (default 200)
   sort: '-created'
 });
 ```

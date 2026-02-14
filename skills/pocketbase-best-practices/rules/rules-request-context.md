@@ -37,6 +37,8 @@ updateRule: 'owner = @request.auth.id'
 deleteRule: 'owner = @request.auth.id'
 
 // Access auth record fields
+// IMPORTANT: If using custom role fields, ensure update rules prevent
+// users from modifying their own role: @request.body.role:isset = false
 listRule: '@request.auth.role = "admin"'
 listRule: '@request.auth.verified = true'
 
@@ -46,8 +48,13 @@ createRule: '@request.auth.id != "" && @request.body.owner = @request.auth.id'
 // Prevent changing certain fields
 updateRule: 'owner = @request.auth.id && @request.body.owner:isset = false'
 
-// Check query parameters
-listRule: '@request.query.publicOnly = "true" || owner = @request.auth.id'
+// WARNING: Query parameters are user-controlled and should NOT be used
+// for authorization decisions. Use them only for optional filtering behavior
+// where the fallback is equally safe.
+// listRule: '@request.query.publicOnly = "true" || owner = @request.auth.id'
+// The above is UNSAFE - users can bypass ownership by adding ?publicOnly=true
+// Instead, use separate endpoints or server-side logic for public vs. private views.
+listRule: 'owner = @request.auth.id || public = true'  // Use a record field, not query param
 
 // Access nested auth relations
 listRule: 'team.members ?= @request.auth.id'

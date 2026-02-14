@@ -30,11 +30,11 @@ async function fixUserData(userId) {
 ```javascript
 import PocketBase from 'pocketbase';
 
-// Admin client with superuser auth
-const adminPb = new PocketBase('http://127.0.0.1:8090');
+// Admin client with superuser auth (use environment variables, never hardcode)
+const adminPb = new PocketBase(process.env.PB_URL);
 await adminPb.collection('_superusers').authWithPassword(
-  'admin@example.com',
-  'adminPassword'
+  process.env.PB_SUPERUSER_EMAIL,
+  process.env.PB_SUPERUSER_PASSWORD
 );
 
 async function impersonateUser(userId) {
@@ -64,10 +64,10 @@ async function adminViewUserPosts(userId) {
 
 // Use case: API keys for server-to-server communication
 async function createApiKey(serviceUserId) {
-  // Create a long-lived impersonation token
+  // Create a service impersonation token (use short durations, rotate regularly)
   const serviceClient = await adminPb
     .collection('service_accounts')
-    .impersonate(serviceUserId, 86400 * 365);  // 1 year
+    .impersonate(serviceUserId, 86400);  // 24 hours max, rotate via scheduled task
 
   // Return token for service to use
   return serviceClient.authStore.token;

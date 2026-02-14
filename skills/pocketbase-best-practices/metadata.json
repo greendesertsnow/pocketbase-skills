@@ -1,5 +1,5 @@
 {
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"organization": "Community",
 	"date": "January 2026",
 	"abstract": "Comprehensive PocketBase development best practices and performance optimization guide. Contains rules across 8 categories, prioritized by impact from critical (collection design, API rules, authentication) to incremental (production deployment). Each rule includes detailed explanations, incorrect vs. correct code examples, and specific guidance to help AI agents generate better PocketBase code.",

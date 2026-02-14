@@ -35,11 +35,23 @@ myapp.com {
     header {
         X-Content-Type-Options "nosniff"
         X-Frame-Options "DENY"
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
         Referrer-Policy "strict-origin-when-cross-origin"
         -Server
     }
 
+    # Restrict admin UI to internal/VPN networks
+    # @admin path /_/*
+    # handle @admin {
+    #     @blocked not remote_ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+    #     respond @blocked 403
+    #     reverse_proxy 127.0.0.1:8090
+    # }
+
     # Rate limiting (requires caddy-ratelimit plugin)
+    # Install: xcaddy build --with github.com/mholt/caddy-ratelimit
+    # Without this plugin, use PocketBase's built-in rate limiter (--rateLimiter=true)
     # rate_limit {
     #     zone api {
     #         key {remote_host}
@@ -54,6 +66,10 @@ myapp.com {
 
 ```nginx
 # /etc/nginx/sites-available/pocketbase
+
+# Rate limit zones must be defined in http context (e.g., /etc/nginx/nginx.conf)
+# limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+
 upstream pocketbase {
     server 127.0.0.1:8090;
     keepalive 64;
@@ -79,11 +95,11 @@ server {
     # Security headers
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
-    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-
-    # Rate limiting
-    limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+    # Note: X-XSS-Protection is deprecated and can introduce vulnerabilities.
+    # Use Content-Security-Policy instead.
 
     location / {
         proxy_pass http://pocketbase;
@@ -143,6 +159,9 @@ version: '3.8'
 
 services:
   pocketbase:
+    # NOTE: This is a third-party community image, not officially maintained by PocketBase.
+    # For production, consider building your own image from the official PocketBase binary.
+    # See: https://pocketbase.io/docs/going-to-production/
     image: ghcr.io/muchobien/pocketbase:latest
     restart: unless-stopped
     volumes:

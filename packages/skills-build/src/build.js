@@ -21,7 +21,11 @@ function parseMarkdownFrontmatter(content) {
   return { frontmatter, content: match[2] };
 }
 
-function buildAgentsMd(skillDir) {
+function sectionToFilename(sectionName) {
+  return sectionName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') + '.md';
+}
+
+function buildSkill(skillDir) {
   const metadataPath = path.join(skillDir, 'metadata.json');
   const rulesDir = path.join(skillDir, 'rules');
 
@@ -66,82 +70,80 @@ function buildAgentsMd(skillDir) {
     const prefix = file.split('-')[0];
 
     if (rulesBySection[prefix]) {
+      // Strip leading ## heading from content (will be generated as section heading)
+      const cleanContent = ruleContent.trim().replace(/^## [^\n]+\n+/, '');
+
       rulesBySection[prefix].push({
         file,
         title: frontmatter.title || file.replace('.md', ''),
         impact: frontmatter.impact || 'MEDIUM',
         impactDescription: frontmatter.impactDescription || '',
-        content: ruleContent.trim()
+        content: cleanContent
       });
     }
   }
 
-  // Build AGENTS.md
-  let output = `# PocketBase Best Practices
-
-**Version ${metadata.version}**
-${metadata.organization}
-${metadata.date}
-
-> This document is optimized for AI agents and LLMs. Rules are prioritized by performance and security impact.
-
----
-
-## Abstract
-
-${metadata.abstract}
-
----
-
-## Table of Contents
-
-`;
-
-  // Build TOC
-  let ruleCounter = {};
-  for (const section of sections) {
-    const sectionRules = rulesBySection[section.prefix] || [];
-    const anchorName = section.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '');
-    output += `${section.num}. [${section.name}](#${anchorName}) - **${section.impact}**\n`;
-
-    ruleCounter[section.prefix] = 0;
-    for (const rule of sectionRules) {
-      ruleCounter[section.prefix]++;
-      const ruleAnchor = `${section.num}${ruleCounter[section.prefix]}-${rule.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '')}`;
-      output += `   - ${section.num}.${ruleCounter[section.prefix]} [${rule.title}](#${ruleAnchor})\n`;
-    }
-    output += '\n';
+  // Create references directory
+  const refsDir = path.join(skillDir, 'references');
+  if (!fs.existsSync(refsDir)) {
+    fs.mkdirSync(refsDir, { recursive: true });
   }
 
-  output += '---\n\n';
-
-  // Build sections
-  ruleCounter = {};
+  // Build per-category reference files
   for (const section of sections) {
     const sectionRules = rulesBySection[section.prefix] || [];
-    output += `## ${section.num}. ${section.name}\n\n`;
-    output += `**Impact: ${section.impact}**\n\n`;
-    output += `${section.description}\n\n`;
+    const filename = sectionToFilename(section.name);
 
-    ruleCounter[section.prefix] = 0;
+    let output = `# ${section.name}\n\n`;
+    output += `**Impact: ${section.impact}**\n\n`;
+    output += `${section.description}\n\n---\n\n`;
+
+    let ruleNum = 0;
     for (const rule of sectionRules) {
-      ruleCounter[section.prefix]++;
-      output += `### ${section.num}.${ruleCounter[section.prefix]} ${rule.title}\n\n`;
+      ruleNum++;
+      output += `## ${ruleNum}. ${rule.title}\n\n`;
       output += `**Impact: ${rule.impact}${rule.impactDescription ? ` (${rule.impactDescription})` : ''}**\n\n`;
       output += `${rule.content}\n\n`;
     }
+
+    const refPath = path.join(refsDir, filename);
+    fs.writeFileSync(refPath, output);
+    console.log(`  Built: references/${filename} (${sectionRules.length} rules)`);
   }
 
-  // Add references
-  output += `---\n\n## References\n\n`;
+  // Build lightweight AGENTS.md (index only)
+  let agentsOutput = `# PocketBase Best Practices\n\n`;
+  agentsOutput += `**Version ${metadata.version}**\n`;
+  agentsOutput += `${metadata.organization}\n`;
+  agentsOutput += `${metadata.date}\n\n`;
+  agentsOutput += `> ${metadata.abstract}\n\n`;
+  agentsOutput += `---\n\n`;
+  agentsOutput += `## Categories\n\n`;
+  agentsOutput += `Detailed rules are split by category. Load only the relevant file:\n\n`;
+
+  for (const section of sections) {
+    const sectionRules = rulesBySection[section.prefix] || [];
+    const filename = sectionToFilename(section.name);
+
+    agentsOutput += `### ${section.num}. [${section.name}](references/${filename}) - **${section.impact}**\n\n`;
+    agentsOutput += `${section.description}\n\n`;
+
+    let ruleNum = 0;
+    for (const rule of sectionRules) {
+      ruleNum++;
+      agentsOutput += `- ${section.num}.${ruleNum} ${rule.title}\n`;
+    }
+    agentsOutput += '\n';
+  }
+
+  agentsOutput += `---\n\n## References\n\n`;
   for (const ref of metadata.references || []) {
-    output += `- ${ref}\n`;
+    agentsOutput += `- ${ref}\n`;
   }
 
-  // Write output
-  const outputPath = path.join(skillDir, 'AGENTS.md');
-  fs.writeFileSync(outputPath, output);
-  console.log(`Built: ${outputPath}`);
+  const agentsPath = path.join(skillDir, 'AGENTS.md');
+  fs.writeFileSync(agentsPath, agentsOutput);
+  console.log(`  Built: AGENTS.md (lightweight index)`);
 }
 
 // Find and build all skills
@@ -151,7 +153,7 @@ const skills = fs.readdirSync(skillsDir).filter(d =>
 
 for (const skill of skills) {
   console.log(`Building skill: ${skill}`);
-  buildAgentsMd(path.join(skillsDir, skill));
+  buildSkill(path.join(skillsDir, skill));
 }
 
-console.log('Build complete!');
+console.log('\nBuild complete!');

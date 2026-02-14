@@ -71,31 +71,48 @@ document.getElementById('github-btn').onclick = () => loginWithOAuth2('github');
 ```javascript
 // Only use when all-in-one isn't possible
 async function loginWithOAuth2Manual() {
-  // Get auth methods to find provider config
+  // Get auth methods - PocketBase provides state and codeVerifier
   const authMethods = await pb.collection('users').listAuthMethods();
   const provider = authMethods.oauth2.providers.find(p => p.name === 'google');
 
-  // Generate code verifier for PKCE
-  const codeVerifier = generateCodeVerifier();
-  const codeChallenge = await generateCodeChallenge(codeVerifier);
+  // Store the provider's state and codeVerifier for callback verification
+  // PocketBase generates these for you - don't create your own
+  sessionStorage.setItem('oauth_state', provider.state);
+  sessionStorage.setItem('oauth_code_verifier', provider.codeVerifier);
 
-  // Open OAuth URL (handle redirect in your app)
-  const authUrl = provider.authURL +
-    `?client_id=${provider.clientId}` +
-    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-    `&code_challenge=${codeChallenge}` +
-    `&code_challenge_method=S256` +
-    `&response_type=code` +
-    `&scope=openid%20email%20profile`;
+  // Build the OAuth URL using provider.authURL + redirect
+  const redirectUrl = window.location.origin + '/oauth-callback';
+  const authUrl = provider.authURL + encodeURIComponent(redirectUrl);
 
-  // After redirect, exchange code
+  // Redirect to OAuth provider
+  window.location.href = authUrl;
+}
+
+// In your callback handler (e.g., /oauth-callback page):
+async function handleOAuth2Callback() {
+  const params = new URLSearchParams(window.location.search);
+
+  // CSRF protection: verify state matches
+  if (params.get('state') !== sessionStorage.getItem('oauth_state')) {
+    throw new Error('State mismatch - potential CSRF attack');
+  }
+
+  const code = params.get('code');
+  const codeVerifier = sessionStorage.getItem('oauth_code_verifier');
+  const redirectUrl = window.location.origin + '/oauth-callback';
+
+  // Exchange code for auth token
   const authData = await pb.collection('users').authWithOAuth2Code(
     'google',
-    code,           // From redirect URL
-    codeVerifier,   // Must match the challenge
-    redirectUri,
+    code,
+    codeVerifier,
+    redirectUrl,
     { emailVisibility: true }
   );
+
+  // Clean up
+  sessionStorage.removeItem('oauth_state');
+  sessionStorage.removeItem('oauth_code_verifier');
 
   return authData;
 }
@@ -105,13 +122,14 @@ async function loginWithOAuth2Manual() {
 
 ```javascript
 // Via API (superuser only) - usually done in Admin UI
+// IMPORTANT: Never hardcode client secrets. Use environment variables.
 await pb.collections.update('users', {
   oauth2: {
     enabled: true,
     providers: [{
       name: 'google',
-      clientId: 'your-client-id',
-      clientSecret: 'your-client-secret'
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET
     }],
     mappedFields: {
       avatarURL: 'avatar'  // Map OAuth field to collection field

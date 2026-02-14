@@ -35,7 +35,8 @@ const pb = new PocketBase('http://127.0.0.1:8090');
 
 // Check token validity before operations
 async function fetchSecureData() {
-  // authStore.isValid checks if token exists and isn't expired
+  // authStore.isValid is a client-side check only (JWT expiry parsing).
+  // Always verify server-side with authRefresh() for critical operations.
   if (!pb.authStore.isValid) {
     throw new Error('Please log in');
   }
@@ -113,9 +114,13 @@ export async function handleRequest(request) {
 
   // ... handle request ...
 
-  // Send updated cookie
+  // Send updated cookie with secure options
   const response = new Response();
-  response.headers.set('set-cookie', pb.authStore.exportToCookie());
+  response.headers.set('set-cookie', pb.authStore.exportToCookie({
+    httpOnly: true,   // Prevent XSS access to auth token
+    secure: true,     // HTTPS only
+    sameSite: 'Lax',  // CSRF protection
+  }));
   return response;
 }
 ```

@@ -51,8 +51,16 @@ async function createPost(data) {
       // Handle specific status codes
       switch (error.status) {
         case 400:
-          // Validation error - response contains field errors
-          return { error: 'validation', fields: error.response.data };
+          // Validation error - extract user-friendly messages only
+          // IMPORTANT: Don't expose raw error.response.data to clients
+          // as it may leak internal field names and validation rules
+          const fieldErrors = {};
+          if (error.response?.data) {
+            for (const [field, details] of Object.entries(error.response.data)) {
+              fieldErrors[field] = details.message;
+            }
+          }
+          return { error: 'validation', fields: fieldErrors };
         case 401:
           // Unauthorized - need to login
           return { error: 'unauthorized' };

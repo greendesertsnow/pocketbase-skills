@@ -55,8 +55,8 @@ const authData = await pb.collection('users').authWithPassword(
 );
 
 // Token automatically stored in authStore
-console.log(pb.authStore.token);
-console.log(pb.authStore.record.id);
+// NOTE: Never log tokens in production - shown here for illustration only
+console.log('Authenticated as:', pb.authStore.record.id);
 ```
 
 **When to use each type:**

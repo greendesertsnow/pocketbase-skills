@@ -154,7 +154,16 @@ class RealtimeManager {
     });
   }
 
-  resubscribeAll() {
+  async resubscribeAll() {
+    // Refresh auth token before resubscribing to ensure valid credentials
+    if (this.pb.authStore.isValid) {
+      try {
+        await this.pb.collection('users').authRefresh();
+      } catch {
+        this.pb.authStore.clear();
+      }
+    }
+
     for (const [collection, handler] of this.subscriptions) {
       this.pb.collection(collection).subscribe('*', handler);
     }

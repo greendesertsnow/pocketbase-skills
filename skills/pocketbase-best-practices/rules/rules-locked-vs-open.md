@@ -64,7 +64,9 @@ const collection = {
   // Intentionally public - these are site-wide announcements
   listRule: '',
   viewRule: '',
-  // Only admins can manage
+  // Only admins can manage (using custom "role" field on auth collection)
+  // IMPORTANT: Prevent role self-assignment in the users collection updateRule:
+  //   updateRule: 'id = @request.auth.id && @request.body.role:isset = false'
   createRule: '@request.auth.role = "admin"',
   updateRule: '@request.auth.role = "admin"',
   deleteRule: '@request.auth.role = "admin"'

@@ -27,9 +27,10 @@ const pb = new PocketBase();  // Uses '/' - likely wrong
 
 ```javascript
 // Browser setup (no polyfills needed)
+// IMPORTANT: Use HTTPS in production (http is only for local development)
 import PocketBase from 'pocketbase';
 
-const pb = new PocketBase('http://127.0.0.1:8090');
+const pb = new PocketBase('http://127.0.0.1:8090');  // Use https:// in production
 
 // Node.js setup (requires polyfills for realtime)
 import PocketBase from 'pocketbase';
@@ -82,10 +83,14 @@ export async function handle({ event, resolve }) {
 
   const response = await resolve(event);
 
-  // Send updated auth cookie
+  // Send updated auth cookie with secure options
   response.headers.append(
     'set-cookie',
-    event.locals.pb.authStore.exportToCookie()
+    event.locals.pb.authStore.exportToCookie({
+      httpOnly: true,   // Prevent XSS access to auth token
+      secure: true,     // HTTPS only
+      sameSite: 'Lax',  // CSRF protection
+    })
   );
 
   return response;

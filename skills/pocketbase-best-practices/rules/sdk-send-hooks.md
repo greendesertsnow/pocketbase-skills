@@ -72,14 +72,15 @@ const users = await pb.collection('users').getList();
 
 ```javascript
 // Request timing / performance monitoring
+let requestStart;
 pb.beforeSend = function(url, options) {
-  options._startTime = performance.now();
+  requestStart = performance.now();
   return { url, options };
 };
 
-pb.afterSend = function(response, data, options) {
-  const duration = performance.now() - options._startTime;
-  console.log(`${options.method} ${response.url}: ${duration.toFixed(2)}ms`);
+pb.afterSend = function(response, data) {
+  const duration = performance.now() - requestStart;
+  console.log(`${response.url}: ${duration.toFixed(2)}ms`);
 
   // Send to analytics
   trackApiPerformance(response.url, duration);
@@ -138,13 +139,11 @@ pb.beforeSend = function(url, options) {
   });
 
   console.log(`[${correlationId}] Starting: ${url}`);
-  options._correlationId = correlationId;
-
   return { url, options };
 };
 
-pb.afterSend = function(response, data, options) {
-  console.log(`[${options._correlationId}] Complete: ${response.status}`);
+pb.afterSend = function(response, data) {
+  console.log(`Complete: ${response.status}`);
   return data;
 };
 ```
@@ -161,8 +160,7 @@ beforeSend?: (
 // afterSend
 afterSend?: (
   response: Response,
-  data: any,
-  options: SendOptions
+  data: any
 ) => any | Promise<any>;
 ```
 

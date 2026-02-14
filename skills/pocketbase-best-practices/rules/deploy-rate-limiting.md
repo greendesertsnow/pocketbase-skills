@@ -116,21 +116,20 @@ myapp.com {
 **Handle rate limit errors in client:**
 
 ```javascript
-async function makeRequest(fn) {
+async function makeRequest(fn, retries = 0, maxRetries = 3) {
   try {
     return await fn();
   } catch (error) {
-    if (error.status === 429) {
-      // Rate limited - wait and retry
+    if (error.status === 429 && retries < maxRetries) {
+      // Rate limited - wait and retry with limit
       const retryAfter = error.response?.retryAfter || 60;
-      console.log(`Rate limited. Retry after ${retryAfter}s`);
+      console.log(`Rate limited. Retry ${retries + 1}/${maxRetries} after ${retryAfter}s`);
 
       // Show user-friendly message
       showMessage('Too many requests. Please wait a moment.');
 
-      // Optional: queue for retry
       await sleep(retryAfter * 1000);
-      return makeRequest(fn);
+      return makeRequest(fn, retries + 1, maxRetries);
     }
     throw error;
   }

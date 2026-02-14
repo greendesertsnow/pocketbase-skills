@@ -122,21 +122,36 @@ WantedBy=multi-user.target
 
 ```bash
 # /opt/pocketbase/.env
-PB_ENCRYPTION_KEY=your-32-character-encryption-key
+# SECURITY: Set restrictive permissions: chmod 600 /opt/pocketbase/.env
+# SECURITY: Add to .gitignore - NEVER commit this file to version control
+# For production, consider a secrets manager (Vault, AWS Secrets Manager, etc.)
+
+PB_ENCRYPTION_KEY=  # Generate with: openssl rand -hex 16
 
 # SMTP
 SMTP_HOST=smtp.sendgrid.net
 SMTP_PORT=587
 SMTP_USER=apikey
-SMTP_PASS=SG.xxxxx
+SMTP_PASS=           # Set your SMTP password here
 
 # S3 (optional)
-AWS_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE
-AWS_SECRET_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+AWS_ACCESS_KEY=      # Set your AWS access key
+AWS_SECRET_KEY=      # Set your AWS secret key
 
 # OAuth (optional)
-GOOGLE_CLIENT_ID=xxx.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=xxx
+GOOGLE_CLIENT_ID=    # Set your Google client ID
+GOOGLE_CLIENT_SECRET= # Set your Google client secret
+```
+
+**Protect your environment file:**
+
+```bash
+# Set restrictive permissions (owner read/write only)
+chmod 600 /opt/pocketbase/.env
+chown pocketbase:pocketbase /opt/pocketbase/.env
+
+# Ensure .env is in .gitignore
+echo ".env" >> .gitignore
 ```
 
 **Production checklist:**

@@ -148,4 +148,4 @@ export async function searchHandler(req) {
 }
 ```
 
-Reference: [PocketBase Filter Binding](https://github.com/pocketbase/js-sdk#binding-filter-parameters)
+Reference: [PocketBase Filters](https://pocketbase.io/docs/api-rules-and-filters/)

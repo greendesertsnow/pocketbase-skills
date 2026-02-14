@@ -54,10 +54,10 @@ const collection = {
 **Common patterns:**
 
 ```javascript
-// Public read, authenticated write
+// Public read, authenticated write (enforce ownership on create)
 listRule: '',
 viewRule: '',
-createRule: '@request.auth.id != ""',
+createRule: '@request.auth.id != "" && @request.body.author = @request.auth.id',
 updateRule: 'author = @request.auth.id',
 deleteRule: 'author = @request.auth.id'
 

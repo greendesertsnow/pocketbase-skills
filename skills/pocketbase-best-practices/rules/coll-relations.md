@@ -56,18 +56,21 @@ const ordersSchema = [
   }
 ];
 
-// For audit logs - cascade delete makes sense
-const auditLogsSchema = [
+// For dependent data like comments - cascade delete makes sense
+const commentsSchema = [
   {
-    name: 'user',
+    name: 'post',
     type: 'relation',
     options: {
-      collectionId: 'users_collection_id',
+      collectionId: 'posts_collection_id',
       maxSelect: 1,
-      cascadeDelete: true  // Delete logs when user is deleted
+      cascadeDelete: true  // Delete comments when post is deleted
     }
   }
 ];
+// NOTE: For audit logs, avoid cascadeDelete - logs should be retained
+// for compliance/forensics even after the referenced user is deleted.
+// Use cascadeDelete: false and handle user deletion separately.
 
 // Handle deletion manually when cascade is false
 try {

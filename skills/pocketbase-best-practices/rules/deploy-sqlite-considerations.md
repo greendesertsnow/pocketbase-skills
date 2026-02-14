@@ -150,6 +150,6 @@ Consider migrating from single PocketBase if:
 1. **Read replicas**: Litestream for SQLite replication
 2. **Sharding**: Multiple PocketBase instances by tenant/feature
 3. **Caching**: Redis/Memcached for read-heavy loads
-4. **Migration**: PostgreSQL via custom PocketBase build
+4. **Alternative backend**: If requirements exceed SQLite, evaluate PostgreSQL-based frameworks
 
 Reference: [SQLite Performance](https://www.sqlite.org/speed.html)

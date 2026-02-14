@@ -5,7 +5,7 @@ license: MIT
 compatibility: Works with any agent. Requires PocketBase v0.36+.
 metadata:
   author: community
-  version: "1.0.0"
+  version: "1.1.0"
   repository: https://github.com/greendesertsnow/pocketbase-skills
   documentation: https://pocketbase.io/docs/
 ---
@@ -13,17 +13,6 @@ metadata:
 # PocketBase Best Practices
 
 42 rules across 8 categories for PocketBase v0.36+, prioritized by impact.
-
-## When to Apply
-
-- Designing collections and schema structures
-- Implementing API rules for access control
-- Setting up authentication (password, OAuth2, MFA)
-- Using the PocketBase JavaScript SDK
-- Optimizing queries with filtering, sorting, and expansion
-- Implementing realtime subscriptions
-- Handling file uploads and storage
-- Deploying PocketBase to production
 
 ## Categories by Priority
 
@@ -94,4 +83,13 @@ metadata:
 
 ## Detailed Rules
 
-For complete rule documentation with code examples, see [AGENTS.md](AGENTS.md).
+Load the relevant category for complete rule documentation with code examples:
+
+- [Collection Design](references/collection-design.md) - Schema patterns, field types, relations, indexes
+- [API Rules & Security](references/api-rules-security.md) - Access control, filter expressions, security patterns
+- [Authentication](references/authentication.md) - Password auth, OAuth2, MFA, token management
+- [SDK Usage](references/sdk-usage.md) - Client initialization, auth stores, error handling, hooks
+- [Query Performance](references/query-performance.md) - Pagination, expansion, batch operations, N+1 prevention
+- [Realtime](references/realtime.md) - SSE subscriptions, event handling, reconnection
+- [File Handling](references/file-handling.md) - Uploads, serving, validation
+- [Production & Deployment](references/production-deployment.md) - Backup, configuration, reverse proxy, SQLite optimization

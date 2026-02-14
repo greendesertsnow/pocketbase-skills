@@ -110,7 +110,7 @@ await pb.collections.update('users', {
   mfa: {
     enabled: true,
     duration: 1800,  // MFA session duration (30 min)
-    rule: ''  // When to require MFA (empty = always after first auth)
+    rule: ''  // When to require MFA (empty = always for all users)
     // rule: '@request.auth.role = "admin"' // Only for admins
   },
   otp: {

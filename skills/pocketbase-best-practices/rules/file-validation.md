@@ -105,7 +105,9 @@ function validateFiles(files, constraintKey) {
       fileErrors.push(`${file.name}: exceeds ${maxMB}MB limit`);
     }
 
-    // Check MIME type (more reliable than extension)
+    // Check MIME type (more reliable than extension, but still spoofable)
+    // Client-side file.type is based on extension, not file content.
+    // Always enforce mimeTypes in PocketBase collection settings for server-side validation.
     if (!constraints.allowedTypes.includes(file.type)) {
       fileErrors.push(`${file.name}: invalid file type (${file.type || 'unknown'})`);
     }

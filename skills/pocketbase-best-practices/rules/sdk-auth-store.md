@@ -125,4 +125,4 @@ pb.authStore.loadFromCookie(cookieString);
 pb.authStore.exportToCookie({ httpOnly: false, secure: true });
 ```
 
-Reference: [PocketBase Auth Store](https://github.com/pocketbase/js-sdk#auth-store)
+Reference: [PocketBase Authentication](https://pocketbase.io/docs/authentication/)

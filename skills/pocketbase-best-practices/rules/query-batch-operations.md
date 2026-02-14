@@ -52,15 +52,18 @@ async function transferFunds(fromId, toId, amount) {
 async function createOrderWithItems(order, items) {
   const batch = pb.createBatch();
 
-  // Queue order creation
-  batch.collection('orders').create(order);
+  // Pre-generate order ID so items can reference it in the same batch
+  // PocketBase accepts custom IDs (15-char alphanumeric)
+  const orderId = crypto.randomUUID().replaceAll('-', '').slice(0, 15);
 
-  // Queue all items (order ID will be available in transaction)
-  items.forEach((item, index) => {
+  // Queue order creation with known ID
+  batch.collection('orders').create({ ...order, id: orderId });
+
+  // Queue all items referencing the pre-generated order ID
+  items.forEach(item => {
     batch.collection('order_items').create({
       ...item,
-      // Reference the order that will be created
-      order: `@request.body.requests.0.body.id`
+      order: orderId
     });
   });
 
@@ -106,6 +109,9 @@ async function syncProducts(products) {
 }
 
 // Mixed operations in transaction
+// NOTE: Batch operations respect API rules per-operation, but ensure your
+// business logic validates inputs (e.g., sufficient balance) server-side
+// via hooks or API rules to prevent unauthorized transfers.
 async function transferFunds(fromId, toId, amount) {
   const batch = pb.createBatch();
 

@@ -158,7 +158,7 @@ interface ClientResponseError {
     data: { [field: string]: { code: string; message: string } };
   };
   isAbort: boolean;      // True if request was cancelled
-  originalError: Error;  // Original error if any
+  cause: Error | null;   // Original error (added in JS SDK v0.26.1)
 }
 ```
 

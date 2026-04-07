@@ -1,10 +1,10 @@
 # PocketBase Best Practices
 
-**Version 1.1.0**
+**Version 1.2.0**
 Community
-January 2026
+April 2026
 
-> Comprehensive PocketBase development best practices and performance optimization guide. Contains rules across 8 categories, prioritized by impact from critical (collection design, API rules, authentication) to incremental (production deployment). Each rule includes detailed explanations, incorrect vs. correct code examples, and specific guidance to help AI agents generate better PocketBase code.
+> Comprehensive PocketBase development best practices and performance optimization guide. Contains 50 rules across 9 categories, prioritized by impact from critical (collection design, API rules, authentication) to incremental (production deployment). Includes server-side extending rules for Go and JavaScript (JSVM) modules. Each rule includes detailed explanations, incorrect vs. correct code examples, and specific guidance to help AI agents generate better PocketBase code.
 
 ---
 
@@ -94,6 +94,19 @@ Backup strategies, configuration management, reverse proxy setup, and SQLite opt
 - 8.4 Configure Reverse Proxy Correctly
 - 8.5 Optimize SQLite for Production
 
+### 9. [Server-Side Extending](references/server-side-extending.md) - **HIGH**
+
+Extending PocketBase with Go or embedded JavaScript (JSVM) - event hooks, custom routes, transactions, cron jobs, filesystem, migrations, and safe server-side filter binding.
+
+- 9.1 Use DBConnect Only When You Need a Custom SQLite Driver
+- 9.2 Set Up a Go-Extended PocketBase Application
+- 9.3 Always Call e.Next() and Use e.App Inside Hook Handlers
+- 9.4 Pick the Right Record Hook - Model vs Request vs Enrich
+- 9.5 Set Up JSVM (pb_hooks) for Server-Side JavaScript
+- 9.6 Load Shared Code with CommonJS require() in pb_hooks
+- 9.7 Avoid Capturing Variables Outside JSVM Handler Scope
+- 9.8 Register Custom Routes Safely with Built-in Middlewares
+
 ---
 
 ## References
@@ -103,3 +116,5 @@ Backup strategies, configuration management, reverse proxy setup, and SQLite opt
 - https://github.com/pocketbase/js-sdk
 - https://pocketbase.io/docs/api-records/
 - https://pocketbase.io/docs/api-rules-and-filters/
+- https://pocketbase.io/docs/go-overview/
+- https://pocketbase.io/docs/js-overview/

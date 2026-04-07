@@ -5,14 +5,14 @@ license: MIT
 compatibility: Works with any agent. Requires PocketBase v0.36+.
 metadata:
   author: community
-  version: "1.1.0"
+  version: "1.2.0"
   repository: https://github.com/greendesertsnow/pocketbase-skills
   documentation: https://pocketbase.io/docs/
 ---
 
 # PocketBase Best Practices
 
-42 rules across 8 categories for PocketBase v0.36+, prioritized by impact.
+50 rules across 9 categories for PocketBase v0.36+, prioritized by impact.
 
 ## Categories by Priority
 
@@ -26,6 +26,7 @@ metadata:
 | 6 | Realtime | MEDIUM | realtime-subscribe, realtime-events, realtime-auth, realtime-reconnection |
 | 7 | File Handling | MEDIUM | file-upload, file-serving, file-validation |
 | 8 | Production & Deployment | MEDIUM | deploy-backup, deploy-configuration, deploy-reverse-proxy, deploy-sqlite-considerations, deploy-rate-limiting |
+| 9 | Server-Side Extending | HIGH | ext-go-setup, ext-js-setup, ext-hooks-chain, ext-routing-custom, ext-hooks-record-vs-request, ext-go-custom-sqlite, ext-jsvm-scope, ext-jsvm-modules |
 
 ## Quick Reference
 
@@ -81,6 +82,16 @@ metadata:
 - **deploy-reverse-proxy**: Put behind nginx/caddy in production
 - **deploy-sqlite-considerations**: Optimize SQLite for production workloads
 
+### Server-Side Extending (HIGH)
+- **ext-go-setup**: Use `app.OnServe()` to register routes; use `e.App` inside hooks, not the parent-scope app
+- **ext-js-setup**: Drop `*.pb.js` in `pb_hooks/`; add `/// <reference path="../pb_data/types.d.ts" />`
+- **ext-hooks-chain**: Always call `e.Next()`/`e.next()`; use `Bind` with an Id for later `Unbind`
+- **ext-routing-custom**: Namespace routes under `/api/{yourapp}/`; attach `RequireAuth()` middleware
+- **ext-hooks-record-vs-request**: Use `OnRecordEnrich` to shape responses (incl. realtime); `OnRecordRequest` for HTTP-only
+- **ext-go-custom-sqlite**: Only use `DBConnect` when you need FTS5/ICU; `DBConnect` is called twice (data.db + auxiliary.db)
+- **ext-jsvm-scope**: Variables outside handlers are undefined at runtime — load shared config via `require()` inside the handler
+- **ext-jsvm-modules**: Only CJS (`require()`) works in goja; bundle ESM first; avoid mutable module state
+
 ## Example Prompts
 
 Try these with your AI agent to see the skill in action:
@@ -109,6 +120,12 @@ Try these with your AI agent to see the skill in action:
 - "Optimize SQLite settings for a production workload with ~500 concurrent users"
 - "Deploy PocketBase with Docker Compose and Caddy"
 
+**Extending PocketBase:**
+- "Add a custom Go route that sends a Slack notification after a record is created"
+- "Write a pb_hooks script that validates an email domain before user signup"
+- "Set up FTS5 full-text search with a custom SQLite driver in my Go app"
+- "Share a config object across multiple pb_hooks files without race conditions"
+
 ## Detailed Rules
 
 Load the relevant category for complete rule documentation with code examples:
@@ -121,3 +138,4 @@ Load the relevant category for complete rule documentation with code examples:
 - [Realtime](references/realtime.md) - SSE subscriptions, event handling, reconnection
 - [File Handling](references/file-handling.md) - Uploads, serving, validation
 - [Production & Deployment](references/production-deployment.md) - Backup, configuration, reverse proxy, SQLite optimization
+- [Server-Side Extending](references/server-side-extending.md) - Go/JSVM setup, event hooks, custom routes, modules, custom SQLite

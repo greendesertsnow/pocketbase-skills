@@ -35,3 +35,7 @@ This file defines the rule categories for PocketBase best practices. Rules are a
 ## 8. Production & Deployment (deploy)
 **Impact:** LOW-MEDIUM
 **Description:** Backup strategies, configuration management, reverse proxy setup, and SQLite optimization.
+
+## 9. Server-Side Extending (ext)
+**Impact:** HIGH
+**Description:** Extending PocketBase with Go or embedded JavaScript (JSVM) - event hooks, custom routes, transactions, cron jobs, filesystem, migrations, and safe server-side filter binding.

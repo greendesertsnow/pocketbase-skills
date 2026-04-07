@@ -188,6 +188,8 @@ const cdnUrl = `${cdnBase}/${record.collectionId}/${record.id}/${record.image}`;
 
 Reference: [PocketBase Files](https://pocketbase.io/docs/files-handling/)
 
+> **Note (JS SDK v0.26.7):** `pb.files.getURL()` now serializes query parameters the same way as the fetch methods — passing `null` or `undefined` as a query param value is silently skipped from the generated URL, so you no longer need to guard optional params before passing them to `getURL()`.
+
 ## 2. Upload Files Correctly
 
 **Impact: MEDIUM (Reliable uploads with progress tracking and validation)**

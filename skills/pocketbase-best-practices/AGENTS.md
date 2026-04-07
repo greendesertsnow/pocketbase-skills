@@ -1,10 +1,10 @@
 # PocketBase Best Practices
 
-**Version 1.2.0**
+**Version 1.3.0**
 Community
 April 2026
 
-> Comprehensive PocketBase development best practices and performance optimization guide. Contains 50 rules across 9 categories, prioritized by impact from critical (collection design, API rules, authentication) to incremental (production deployment). Includes server-side extending rules for Go and JavaScript (JSVM) modules. Each rule includes detailed explanations, incorrect vs. correct code examples, and specific guidance to help AI agents generate better PocketBase code.
+> Comprehensive PocketBase development best practices and performance optimization guide. Contains 53 rules across 9 categories, prioritized by impact from critical (collection design, API rules, authentication) to incremental (production deployment). Includes server-side extending rules for Go and JavaScript (JSVM) modules, cron job scheduling, and Go schema migrations. Updated for PocketBase v0.36.8 and JS SDK v0.26.8 (getFullList default batch size 1000, authWithOAuth2 cancellation fix, getURL null param handling). Each rule includes detailed explanations, incorrect vs. correct code examples, and specific guidance to help AI agents generate better PocketBase code.
 
 ---
 
@@ -92,20 +92,23 @@ Backup strategies, configuration management, reverse proxy setup, and SQLite opt
 - 8.2 Configure Production Settings Properly
 - 8.3 Enable Rate Limiting for API Protection
 - 8.4 Configure Reverse Proxy Correctly
-- 8.5 Optimize SQLite for Production
+- 8.5 Tune OS and Runtime for PocketBase Scale
+- 8.6 Optimize SQLite for Production
 
 ### 9. [Server-Side Extending](references/server-side-extending.md) - **HIGH**
 
 Extending PocketBase with Go or embedded JavaScript (JSVM) - event hooks, custom routes, transactions, cron jobs, filesystem, migrations, and safe server-side filter binding.
 
-- 9.1 Use DBConnect Only When You Need a Custom SQLite Driver
-- 9.2 Set Up a Go-Extended PocketBase Application
-- 9.3 Always Call e.Next() and Use e.App Inside Hook Handlers
-- 9.4 Pick the Right Record Hook - Model vs Request vs Enrich
-- 9.5 Set Up JSVM (pb_hooks) for Server-Side JavaScript
-- 9.6 Load Shared Code with CommonJS require() in pb_hooks
-- 9.7 Avoid Capturing Variables Outside JSVM Handler Scope
-- 9.8 Register Custom Routes Safely with Built-in Middlewares
+- 9.1 Schedule Recurring Jobs with the Builtin Cron Scheduler
+- 9.2 Use DBConnect Only When You Need a Custom SQLite Driver
+- 9.3 Version Your Schema with Go Migrations
+- 9.4 Set Up a Go-Extended PocketBase Application
+- 9.5 Always Call e.Next() and Use e.App Inside Hook Handlers
+- 9.6 Pick the Right Record Hook - Model vs Request vs Enrich
+- 9.7 Set Up JSVM (pb_hooks) for Server-Side JavaScript
+- 9.8 Load Shared Code with CommonJS require() in pb_hooks
+- 9.9 Avoid Capturing Variables Outside JSVM Handler Scope
+- 9.10 Register Custom Routes Safely with Built-in Middlewares
 
 ---
 
@@ -118,3 +121,7 @@ Extending PocketBase with Go or embedded JavaScript (JSVM) - event hooks, custom
 - https://pocketbase.io/docs/api-rules-and-filters/
 - https://pocketbase.io/docs/go-overview/
 - https://pocketbase.io/docs/js-overview/
+- https://pocketbase.io/docs/go-migrations/
+- https://pocketbase.io/docs/go-jobs-scheduling/
+- https://pocketbase.io/docs/js-jobs-scheduling/
+- https://pocketbase.io/docs/going-to-production/

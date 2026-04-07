@@ -6,7 +6,129 @@ Extending PocketBase with Go or embedded JavaScript (JSVM) - event hooks, custom
 
 ---
 
-## 1. Use DBConnect Only When You Need a Custom SQLite Driver
+## 1. Schedule Recurring Jobs with the Builtin Cron Scheduler
+
+**Impact: MEDIUM (Avoids external schedulers and correctly integrates background tasks with the PocketBase lifecycle)**
+
+PocketBase includes a cron scheduler that starts automatically with `serve`. Register jobs before calling `app.Start()` (Go) or at the top level of a `pb_hooks` file (JSVM). Each job runs in its own goroutine and receives a standard cron expression.
+
+**Incorrect (external timer, blocking hook, replacing system jobs):**
+
+```go
+// ❌ Using a raw Go timer instead of the app cron – misses lifecycle management
+go func() {
+    for range time.Tick(2 * time.Minute) {
+        log.Println("cleanup")
+    }
+}()
+
+// ❌ Blocking inside a hook instead of scheduling
+app.OnServe().BindFunc(func(se *core.ServeEvent) error {
+    for {
+        time.Sleep(2 * time.Minute)
+        log.Println("cleanup") // ❌ blocks the hook and never returns se.Next()
+    }
+})
+
+// ❌ Removing all cron jobs wipes PocketBase's own log-cleanup and auto-backup jobs
+app.Cron().RemoveAll()
+```
+
+```javascript
+// ❌ JSVM: using setTimeout – not supported in the embedded goja engine
+setTimeout(() => console.log("run"), 120_000); // ReferenceError
+```
+
+**Correct – Go:**
+
+```go
+package main
+
+import (
+    "log"
+
+    "github.com/pocketbase/pocketbase"
+    "github.com/pocketbase/pocketbase/core"
+)
+
+func main() {
+    app := pocketbase.New()
+
+    // Register before app.Start() so the scheduler knows about the job at launch.
+    // MustAdd panics on an invalid cron expression (use Add if you prefer an error return).
+    app.Cron().MustAdd("cleanup-drafts", "0 3 * * *", func() {
+        // Runs every day at 03:00 UTC in its own goroutine.
+        // Use app directly here (not e.App) because this is not inside a hook.
+        records, err := app.FindAllRecords("posts",
+            core.FilterData("status = 'draft' && created < {:cutoff}"),
+        )
+        if err != nil {
+            app.Logger().Error("cron cleanup-drafts", "err", err)
+            return
+        }
+        for _, r := range records {
+            if err := app.Delete(r); err != nil {
+                app.Logger().Error("cron delete", "id", r.Id, "err", err)
+            }
+        }
+    })
+
+    // Remove a job by ID (e.g. during a feature flag toggle)
+    // app.Cron().Remove("cleanup-drafts")
+
+    if err := app.Start(); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+**Correct – JSVM:**
+
+```javascript
+// pb_hooks/crons.pb.js
+/// <reference path="../pb_data/types.d.ts" />
+
+// Top-level cronAdd() registers the job at hook-load time.
+// The handler runs in its own goroutine and has access to $app.
+cronAdd("notify-unpublished", "*/30 * * * *", () => {
+    // Runs every 30 minutes
+    const records = $app.findAllRecords("posts",
+        $dbx.hashExp({ status: "draft" })
+    );
+    console.log(`Found ${records.length} unpublished posts`);
+});
+
+// Remove a registered job by ID (useful in tests or feature toggles)
+// cronRemove("notify-unpublished");
+```
+
+**Cron expression reference:**
+
+```
+┌─── minute        (0 - 59)
+│  ┌── hour         (0 - 23)
+│  │  ┌─ day-of-month (1 - 31)
+│  │  │  ┌ month       (1 - 12)
+│  │  │  │  ┌ day-of-week  (0 - 6, Sunday = 0)
+│  │  │  │  │
+*  *  *  *  *
+
+Examples:
+  */2 * * * *    every 2 minutes
+  0 3 * * *      daily at 03:00
+  0 0 * * 0      weekly on Sunday midnight
+  @hourly        macro equivalent to 0 * * * *
+```
+
+**Key rules:**
+- System jobs use the `__pb*__` ID prefix (e.g. `__pbLogsCleanup__`). Never call `RemoveAll()` or use that prefix for your own jobs.
+- All registered cron jobs are visible and can be manually triggered from _Dashboard > Settings > Crons_.
+- JSVM handlers have access to `$app` but **not** to outer-scope variables (see JSVM scope rule).
+- Go jobs can use `app` directly (not `e.App`) because they run outside the hook/transaction context.
+
+Reference: [Go – Jobs scheduling](https://pocketbase.io/docs/go-jobs-scheduling/) | [JS – Jobs scheduling](https://pocketbase.io/docs/js-jobs-scheduling/)
+
+## 2. Use DBConnect Only When You Need a Custom SQLite Driver
 
 **Impact: MEDIUM (Incorrect driver setup breaks both data.db and auxiliary.db, or introduces unnecessary CGO)**
 
@@ -138,7 +260,142 @@ app := pocketbase.NewWithConfig(pocketbase.Config{
 
 Reference: [Extend with Go - Custom SQLite driver](https://pocketbase.io/docs/go-overview/#custom-sqlite-driver)
 
-## 2. Set Up a Go-Extended PocketBase Application
+## 3. Version Your Schema with Go Migrations
+
+**Impact: HIGH (Guarantees repeatable, transactional schema evolution and eliminates manual dashboard changes in production)**
+
+PocketBase ships with a `migratecmd` plugin that generates versioned `.go` migration files, applies them automatically on `serve`, and lets you roll back with `migrate down`. Because the files are compiled into your binary, no extra migration tool is needed.
+
+**Incorrect (one-off SQL or dashboard changes in production):**
+
+```go
+// ❌ Running raw SQL directly at startup without a migration file –
+//    the change is applied every restart and has no rollback path.
+app.OnServe().BindFunc(func(se *core.ServeEvent) error {
+    _, err := app.DB().NewQuery(
+        "ALTER TABLE posts ADD COLUMN summary TEXT DEFAULT ''",
+    ).Execute()
+    return err
+})
+
+// ❌ Forgetting to import the migrations package means
+//    registered migrations are never executed.
+package main
+
+import (
+    "github.com/pocketbase/pocketbase"
+    "github.com/pocketbase/pocketbase/plugins/migratecmd"
+    // _ "myapp/migrations"  ← omitted: migrations never run
+)
+```
+
+**Correct (register migratecmd, import migrations package):**
+
+```go
+// main.go
+package main
+
+import (
+    "log"
+    "os"
+
+    "github.com/pocketbase/pocketbase"
+    "github.com/pocketbase/pocketbase/plugins/migratecmd"
+    "github.com/pocketbase/pocketbase/tools/osutils"
+
+    // Import side-effects only; this registers all init() migrations.
+    _ "myapp/migrations"
+)
+
+func main() {
+    app := pocketbase.New()
+
+    migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{
+        // Automigrate generates a new .go file whenever you make
+        // collection changes in the Dashboard (dev-only).
+        Automigrate: osutils.IsProbablyGoRun(),
+    })
+
+    if err := app.Start(); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+**Create and write a migration:**
+
+```bash
+# Create a blank migration file in ./migrations/
+go run . migrate create "add_summary_to_posts"
+```
+
+```go
+// migrations/1687801090_add_summary_to_posts.go
+package migrations
+
+import (
+    "github.com/pocketbase/pocketbase/core"
+    m "github.com/pocketbase/pocketbase/migrations"
+)
+
+func init() {
+    m.Register(func(app core.App) error {
+        // app is a transactional App instance – safe to use directly.
+        collection, err := app.FindCollectionByNameOrId("posts")
+        if err != nil {
+            return err
+        }
+
+        collection.Fields.Add(&core.TextField{
+            Name:     "summary",
+            Required: false,
+        })
+
+        return app.Save(collection)
+    }, func(app core.App) error {
+        // Optional rollback
+        collection, err := app.FindCollectionByNameOrId("posts")
+        if err != nil {
+            return err
+        }
+        collection.Fields.RemoveByName("summary")
+        return app.Save(collection)
+    })
+}
+```
+
+**Snapshot all collections (useful for a fresh repo):**
+
+```bash
+# Generates a migration file that recreates your current schema from scratch.
+go run . migrate collections
+```
+
+**Clean up dev migration history:**
+
+```bash
+# Remove _migrations table entries that have no matching .go file.
+# Run after squashing or deleting intermediate dev migration files.
+go run . migrate history-sync
+```
+
+**Apply / roll back manually:**
+
+```bash
+go run . migrate up        # apply all unapplied migrations
+go run . migrate down 1    # revert the last applied migration
+```
+
+**Key details:**
+- Migration functions receive a **transactional** `core.App` – treat it as the database source of truth. Never use the outer `app` variable inside migration callbacks.
+- New unapplied migrations run automatically on every `serve` start – no manual step in production.
+- `Automigrate: osutils.IsProbablyGoRun()` limits auto-generation to `go run` (development) and prevents accidental file creation in production binaries.
+- Prefer the collection API (`app.Save(collection)`) over raw SQL `ALTER TABLE` so PocketBase's internal schema cache stays consistent.
+- Commit all generated `.go` files to version control; do **not** commit `pb_data/`.
+
+Reference: [Extend with Go – Migrations](https://pocketbase.io/docs/go-migrations/)
+
+## 4. Set Up a Go-Extended PocketBase Application
 
 **Impact: HIGH (Foundation for all custom Go business logic, hooks, and routing)**
 
@@ -227,7 +484,7 @@ go build && ./myapp serve  # production (statically linked binary)
 
 Reference: [Extend with Go - Overview](https://pocketbase.io/docs/go-overview/)
 
-## 3. Always Call e.Next() and Use e.App Inside Hook Handlers
+## 5. Always Call e.Next() and Use e.App Inside Hook Handlers
 
 **Impact: CRITICAL (Forgetting e.Next() silently breaks the execution chain; reusing parent-scope app causes deadlocks)**
 
@@ -305,7 +562,7 @@ onRecordAfterCreateSuccess((e) => {
 
 Reference: [Go Event hooks](https://pocketbase.io/docs/go-event-hooks/) · [JS Event hooks](https://pocketbase.io/docs/js-event-hooks/)
 
-## 4. Pick the Right Record Hook - Model vs Request vs Enrich
+## 6. Pick the Right Record Hook - Model vs Request vs Enrich
 
 **Impact: HIGH (Wrong hook = missing request context, double-fired logic, or leaked fields in realtime events)**
 
@@ -365,7 +622,7 @@ onRecordEnrich((e) => {
 
 Reference: [Go Record request hooks](https://pocketbase.io/docs/go-event-hooks/#record-crud-request-hooks) · [JS Record model hooks](https://pocketbase.io/docs/js-event-hooks/#record-model-hooks)
 
-## 5. Set Up JSVM (pb_hooks) for Server-Side JavaScript
+## 7. Set Up JSVM (pb_hooks) for Server-Side JavaScript
 
 **Impact: HIGH (Correct setup unlocks hot-reload, type-completion, and the full JSVM API)**
 
@@ -418,7 +675,7 @@ onRecordAfterUpdateSuccess((e) => {
 
 Reference: [Extend with JavaScript - Overview](https://pocketbase.io/docs/js-overview/)
 
-## 6. Load Shared Code with CommonJS require() in pb_hooks
+## 8. Load Shared Code with CommonJS require() in pb_hooks
 
 **Impact: MEDIUM (Correct module usage prevents require() failures, race conditions, and ESM import errors)**
 
@@ -519,7 +776,7 @@ onBootstrap((e) => {
 
 Reference: [Extend with JavaScript - Loading modules](https://pocketbase.io/docs/js-overview/#loading-modules)
 
-## 7. Avoid Capturing Variables Outside JSVM Handler Scope
+## 9. Avoid Capturing Variables Outside JSVM Handler Scope
 
 **Impact: HIGH (Variables defined outside a handler are undefined at runtime due to handler serialization)**
 
@@ -584,7 +841,7 @@ onRecordAfterCreateSuccess((e) => {
 
 Reference: [Extend with JavaScript - Handlers scope](https://pocketbase.io/docs/js-overview/#handlers-scope)
 
-## 8. Register Custom Routes Safely with Built-in Middlewares
+## 10. Register Custom Routes Safely with Built-in Middlewares
 
 **Impact: HIGH (Protects custom endpoints with auth, avoids /api path collisions, inherits rate limiting)**
 

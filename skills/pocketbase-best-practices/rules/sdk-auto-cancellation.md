@@ -133,5 +133,8 @@ async function fetchWithCancellation() {
 | Grouped requests | Custom `requestKey` |
 | Component cleanup | `cancelRequest(key)` |
 | Testing/debugging | `autoCancellation(false)` |
+| OAuth2 flow cancel | `cancelRequest(requestKey)` — properly rejects the `authWithOAuth2()` Promise (JS SDK v0.26.8+) |
+
+> **Note (JS SDK v0.26.8):** Calling `pb.cancelRequest(requestKey)` while `authWithOAuth2()` is waiting now properly rejects the returned Promise. In earlier versions the manual cancellation did not account for the waiting realtime subscription, so the Promise could hang indefinitely.
 
 Reference: [PocketBase Auto-Cancellation](https://github.com/pocketbase/js-sdk#auto-cancellation)

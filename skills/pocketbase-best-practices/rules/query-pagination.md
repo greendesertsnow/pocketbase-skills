@@ -70,7 +70,7 @@ async function loadNextPage() {
 async function getAllPostsEfficiently() {
   const allPosts = [];
   let page = 1;
-  const perPage = 200;  // Larger batches = fewer requests
+  const perPage = 1000;  // Larger batches = fewer requests (max 1000 per API limit)
 
   while (true) {
     const result = await pb.collection('posts').getList(page, perPage, {
@@ -90,7 +90,7 @@ async function getAllPostsEfficiently() {
 
 // Or use getFullList with batch option
 const allPosts = await pb.collection('posts').getFullList({
-  batch: 200,  // Records per request (default 200)
+  batch: 1000,  // Records per request (default 1000 since JS SDK v0.26.6; max 1000)
   sort: '-created'
 });
 ```
@@ -107,7 +107,7 @@ const allPosts = await pb.collection('posts').getFullList({
 
 **Performance tips:**
 - Use `skipTotal: true` unless you need page count
-- Keep `perPage` reasonable (20-100 for UI, 200-500 for batch)
+- Keep `perPage` reasonable (20-100 for UI, up to 1000 for batch exports)
 - Index fields used in sort and filter
 - Cursor pagination scales better than offset
 

@@ -12,21 +12,21 @@ metadata:
 
 # PocketBase Best Practices
 
-50 rules across 9 categories for PocketBase v0.36+, prioritized by impact.
+58 rules across 9 categories for PocketBase v0.36+, prioritized by impact.
 
 ## Categories by Priority
 
 | Priority | Category | Impact | Rules |
 |----------|----------|--------|-------|
 | 1 | Collection Design | CRITICAL | coll-field-types, coll-auth-vs-base, coll-relations, coll-indexes, coll-view-collections, coll-geopoint |
-| 2 | API Rules & Security | CRITICAL | rules-basics, rules-filter-syntax, rules-request-context, rules-cross-collection, rules-locked-vs-open |
-| 3 | Authentication | CRITICAL | auth-password, auth-oauth2, auth-token-management, auth-mfa, auth-impersonation |
+| 2 | API Rules & Security | CRITICAL | rules-basics, rules-filter-syntax, rules-request-context, rules-cross-collection, rules-locked-vs-open, rules-strftime |
+| 3 | Authentication | CRITICAL | auth-password, auth-oauth2, auth-otp, auth-token-management, auth-mfa, auth-impersonation |
 | 4 | SDK Usage | HIGH | sdk-initialization, sdk-auth-store, sdk-error-handling, sdk-auto-cancellation, sdk-filter-binding, sdk-field-modifiers, sdk-send-hooks |
 | 5 | Query Performance | HIGH | query-pagination, query-expand, query-field-selection, query-batch-operations, query-n-plus-one, query-first-item, query-back-relations |
 | 6 | Realtime | MEDIUM | realtime-subscribe, realtime-events, realtime-auth, realtime-reconnection |
 | 7 | File Handling | MEDIUM | file-upload, file-serving, file-validation |
-| 8 | Production & Deployment | MEDIUM | deploy-backup, deploy-configuration, deploy-reverse-proxy, deploy-sqlite-considerations, deploy-rate-limiting |
-| 9 | Server-Side Extending | HIGH | ext-go-setup, ext-js-setup, ext-hooks-chain, ext-routing-custom, ext-hooks-record-vs-request, ext-go-custom-sqlite, ext-jsvm-scope, ext-jsvm-modules |
+| 8 | Production & Deployment | MEDIUM | deploy-backup, deploy-configuration, deploy-reverse-proxy, deploy-sqlite-considerations, deploy-rate-limiting, deploy-scaling |
+| 9 | Server-Side Extending | HIGH | ext-go-setup, ext-js-setup, ext-hooks-chain, ext-hooks-record-vs-request, ext-routing-custom, ext-transactions, ext-filter-binding-server, ext-filesystem, ext-cron-jobs, ext-go-migrations, ext-go-custom-sqlite, ext-jsvm-scope, ext-jsvm-modules |
 
 ## Quick Reference
 
@@ -41,13 +41,15 @@ metadata:
 ### API Rules (CRITICAL)
 - **rules-basics**: Always set API rules; empty = public access
 - **rules-filter-syntax**: Use @request.auth, @collection, @now in rules
-- **rules-request-context**: Access request data via @request.body, @request.query
+- **rules-request-context**: Access request data via @request.body, @request.query; `@request.context` values: `default`/`oauth2`/`otp`/`password`/`realtime`/`protectedFile`
 - **rules-cross-collection**: Use @collection.name.field for cross-collection checks
 - **rules-locked-vs-open**: Start locked, open selectively
+- **rules-strftime**: Use `strftime('%Y-%m-%d', created)` for date arithmetic (v0.36+)
 
 ### Authentication (CRITICAL)
 - **auth-password**: Use authWithPassword for email/password login
 - **auth-oauth2**: Configure OAuth2 providers via Admin UI
+- **auth-otp**: Two-step `requestOTP` → `authWithOTP`; rate-limit requestOTP and never leak email existence
 - **auth-token-management**: Store tokens securely, refresh before expiry
 - **auth-mfa**: Enable MFA for sensitive applications
 - **auth-impersonation**: Use impersonation for admin actions on behalf of users
@@ -81,13 +83,20 @@ metadata:
 - **deploy-configuration**: Use environment variables for config
 - **deploy-reverse-proxy**: Put behind nginx/caddy in production
 - **deploy-sqlite-considerations**: Optimize SQLite for production workloads
+- **deploy-rate-limiting**: Enable the built-in rate limiter (fixed-window as of v0.36.7); front with Nginx/Caddy for defense in depth
+- **deploy-scaling**: Raise `ulimit -n` for realtime, set `GOMEMLIMIT`, enable settings encryption
 
 ### Server-Side Extending (HIGH)
 - **ext-go-setup**: Use `app.OnServe()` to register routes; use `e.App` inside hooks, not the parent-scope app
 - **ext-js-setup**: Drop `*.pb.js` in `pb_hooks/`; add `/// <reference path="../pb_data/types.d.ts" />`
 - **ext-hooks-chain**: Always call `e.Next()`/`e.next()`; use `Bind` with an Id for later `Unbind`
-- **ext-routing-custom**: Namespace routes under `/api/{yourapp}/`; attach `RequireAuth()` middleware
 - **ext-hooks-record-vs-request**: Use `OnRecordEnrich` to shape responses (incl. realtime); `OnRecordRequest` for HTTP-only
+- **ext-routing-custom**: Namespace routes under `/api/{yourapp}/`; attach `RequireAuth()` middleware
+- **ext-transactions**: Use the scoped `txApp` inside `RunInTransaction`; never capture the outer `app`
+- **ext-filter-binding-server**: Bind user input with `{:name}` + `dbx.Params` in `FindFirstRecordByFilter` / `FindRecordsByFilter`
+- **ext-filesystem**: `defer fs.Close()` on every `NewFilesystem()` / `NewBackupsFilesystem()` handle
+- **ext-cron-jobs**: Register with `app.Cron().MustAdd(id, expr, fn)` / `cronAdd()`; stable ids, no `__pb*__` prefix
+- **ext-go-migrations**: Versioned `.go` files under `migrations/`; `Automigrate: osutils.IsProbablyGoRun()`
 - **ext-go-custom-sqlite**: Only use `DBConnect` when you need FTS5/ICU; `DBConnect` is called twice (data.db + auxiliary.db)
 - **ext-jsvm-scope**: Variables outside handlers are undefined at runtime — load shared config via `require()` inside the handler
 - **ext-jsvm-modules**: Only CJS (`require()`) works in goja; bundle ESM first; avoid mutable module state

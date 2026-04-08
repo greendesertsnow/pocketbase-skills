@@ -128,7 +128,173 @@ Examples:
 
 Reference: [Go – Jobs scheduling](https://pocketbase.io/docs/go-jobs-scheduling/) | [JS – Jobs scheduling](https://pocketbase.io/docs/js-jobs-scheduling/)
 
-## 2. Use DBConnect Only When You Need a Custom SQLite Driver
+## 2. Always Close the Filesystem Handle Returned by NewFilesystem
+
+**Impact: HIGH (Leaked filesystem clients keep S3 connections and file descriptors open until the process exits)**
+
+`app.NewFilesystem()` (Go) and `$app.newFilesystem()` (JS) return a filesystem client backed by either the local disk or S3, depending on the app settings. **The caller owns the handle** and must close it - there is no finalizer and no automatic pooling. Leaking handles leaks TCP connections to S3 and file descriptors on disk, and eventually the server will stop accepting uploads.
+
+PocketBase also ships a second client: `app.NewBackupsFilesystem()` for the backups bucket/directory, with the same ownership rules.
+
+**Incorrect (no close, raw bytes buffered in memory):**
+
+```go
+// ❌ Forgets to close fs - connection leaks
+func downloadAvatar(app core.App, key string) ([]byte, error) {
+    fs, err := app.NewFilesystem()
+    if err != nil {
+        return nil, err
+    }
+    // ❌ no defer fs.Close()
+
+    // ❌ GetFile loads the whole file into a reader; reading it all into a
+    //    byte slice defeats streaming for large files
+    r, err := fs.GetFile(key)
+    if err != nil {
+        return nil, err
+    }
+    defer r.Close()
+    return io.ReadAll(r)
+}
+```
+
+**Correct (defer Close, stream to the HTTP response):**
+
+```go
+func serveAvatar(app core.App, key string) echo.HandlerFunc {
+    return func(e *core.RequestEvent) error {
+        fs, err := app.NewFilesystem()
+        if err != nil {
+            return e.InternalServerError("filesystem init failed", err)
+        }
+        defer fs.Close() // REQUIRED
+
+        // Serve directly from the filesystem - handles ranges, content-type,
+        // and the X-Accel-Redirect / X-Sendfile headers when available
+        return fs.Serve(e.Response, e.Request, key, "avatar.jpg")
+    }
+}
+
+// Uploading a local file to the PocketBase-managed filesystem
+func importAvatar(app core.App, record *core.Record, path string) error {
+    f, err := filesystem.NewFileFromPath(path)
+    if err != nil {
+        return err
+    }
+    record.Set("avatar", f) // assignment + app.Save() persist it
+    return app.Save(record)
+}
+```
+
+```javascript
+// JSVM - file factories live on the $filesystem global
+const file1 = $filesystem.fileFromPath("/tmp/import.jpg");
+const file2 = $filesystem.fileFromBytes(new Uint8Array([0xff, 0xd8]), "logo.jpg");
+const file3 = $filesystem.fileFromURL("https://example.com/a.jpg");
+
+// Assigning to a record field triggers upload on save
+record.set("avatar", file1);
+$app.save(record);
+
+// Low-level client - MUST be closed
+const fs = $app.newFilesystem();
+try {
+    const list = fs.list("thumbs/");
+    for (const obj of list) {
+        console.log(obj.key, obj.size);
+    }
+} finally {
+    fs.close(); // REQUIRED
+}
+```
+
+**Rules:**
+- `defer fs.Close()` **immediately** after a successful `NewFilesystem()` / `NewBackupsFilesystem()` call (Go). In JS, wrap in `try { ... } finally { fs.close() }`.
+- Prefer the high-level record-field API (`record.Set("field", file)` + `app.Save`) over direct `fs.Upload` calls - it handles thumbs regeneration, orphan cleanup, and hook integration.
+- File factory functions (`filesystem.NewFileFromPath`, `NewFileFromBytes`, `NewFileFromURL` / JS `$filesystem.fileFromPath|Bytes|URL`) capture their input; they do not stream until save.
+- `fileFromURL` performs an HTTP GET and loads the body into memory - not appropriate for large files.
+- Do not share a single long-lived `fs` across unrelated requests; the object is cheap to create per request.
+
+Reference: [Go Filesystem](https://pocketbase.io/docs/go-filesystem/) · [JS Filesystem](https://pocketbase.io/docs/js-filesystem/)
+
+## 3. Bind User Input in Server-Side Filters with {:placeholder} Params
+
+**Impact: CRITICAL (String-concatenating user input into filter expressions is a direct injection vulnerability)**
+
+Server-side helpers like `FindFirstRecordByFilter`, `FindRecordsByFilter`, and `dbx.NewExp` accept a filter string that supports `{:name}` placeholders. **Never** concatenate user input into the filter - PocketBase's filter parser has its own syntax that is sensitive to quoting, and concatenation allows an attacker to alter the query (same class of bug as SQL injection).
+
+**Incorrect (string interpolation - filter injection):**
+
+```go
+// ❌ attacker sets email to:   x' || 1=1 || email='
+//    resulting filter bypasses the intended match entirely
+email := e.Request.URL.Query().Get("email")
+record, err := app.FindFirstRecordByFilter(
+    "users",
+    "email = '"+email+"' && verified = true", // ❌
+)
+```
+
+```javascript
+// JSVM - same class of bug
+const email = e.request.url.query().get("email");
+const record = $app.findFirstRecordByFilter(
+    "users",
+    `email = '${email}' && verified = true`, // ❌
+);
+```
+
+**Correct (named placeholders + params map):**
+
+```go
+import "github.com/pocketbase/dbx"
+
+email := e.Request.URL.Query().Get("email")
+record, err := app.FindFirstRecordByFilter(
+    "users",
+    "email = {:email} && verified = true",
+    dbx.Params{"email": email}, // values are quoted/escaped by the framework
+)
+if err != nil {
+    return e.NotFoundError("user not found", err)
+}
+
+// Paginated variant: FindRecordsByFilter(collection, filter, sort, limit, offset, params...)
+recs, err := app.FindRecordsByFilter(
+    "posts",
+    "author = {:author} && status = {:status}",
+    "-created",
+    20, 0,
+    dbx.Params{"author": e.Auth.Id, "status": "published"},
+)
+```
+
+```javascript
+// JSVM - second argument after the filter is the params object
+const record = $app.findFirstRecordByFilter(
+    "users",
+    "email = {:email} && verified = true",
+    { email: email },
+);
+
+const recs = $app.findRecordsByFilter(
+    "posts",
+    "author = {:author} && status = {:status}",
+    "-created", 20, 0,
+    { author: e.auth.id, status: "published" },
+);
+```
+
+**Rules:**
+- Placeholder syntax is `{:name}` inside the filter string, and the value is supplied via `dbx.Params{"name": value}` (Go) or a plain object (JS).
+- The same applies to `dbx.NewExp("LOWER(email) = {:email}", dbx.Params{"email": email})` when writing raw `dbx` expressions.
+- Passing a `types.DateTime` / `DateTime` value binds it correctly - do not stringify dates manually.
+- `nil` / `null` binds as SQL NULL; use `field = null` or `field != null` in the filter expression.
+- The filter grammar is the same as used by collection API rules - consult [Filter Syntax](https://pocketbase.io/docs/api-rules-and-filters/#filters) for operators.
+
+Reference: [Go database - FindRecordsByFilter](https://pocketbase.io/docs/go-records/#fetch-records-via-filter-expression) · [JS database - findRecordsByFilter](https://pocketbase.io/docs/js-records/#fetch-records-via-filter-expression)
+
+## 4. Use DBConnect Only When You Need a Custom SQLite Driver
 
 **Impact: MEDIUM (Incorrect driver setup breaks both data.db and auxiliary.db, or introduces unnecessary CGO)**
 
@@ -260,7 +426,7 @@ app := pocketbase.NewWithConfig(pocketbase.Config{
 
 Reference: [Extend with Go - Custom SQLite driver](https://pocketbase.io/docs/go-overview/#custom-sqlite-driver)
 
-## 3. Version Your Schema with Go Migrations
+## 5. Version Your Schema with Go Migrations
 
 **Impact: HIGH (Guarantees repeatable, transactional schema evolution and eliminates manual dashboard changes in production)**
 
@@ -395,7 +561,7 @@ go run . migrate down 1    # revert the last applied migration
 
 Reference: [Extend with Go – Migrations](https://pocketbase.io/docs/go-migrations/)
 
-## 4. Set Up a Go-Extended PocketBase Application
+## 6. Set Up a Go-Extended PocketBase Application
 
 **Impact: HIGH (Foundation for all custom Go business logic, hooks, and routing)**
 
@@ -484,7 +650,7 @@ go build && ./myapp serve  # production (statically linked binary)
 
 Reference: [Extend with Go - Overview](https://pocketbase.io/docs/go-overview/)
 
-## 5. Always Call e.Next() and Use e.App Inside Hook Handlers
+## 7. Always Call e.Next() and Use e.App Inside Hook Handlers
 
 **Impact: CRITICAL (Forgetting e.Next() silently breaks the execution chain; reusing parent-scope app causes deadlocks)**
 
@@ -562,7 +728,7 @@ onRecordAfterCreateSuccess((e) => {
 
 Reference: [Go Event hooks](https://pocketbase.io/docs/go-event-hooks/) · [JS Event hooks](https://pocketbase.io/docs/js-event-hooks/)
 
-## 6. Pick the Right Record Hook - Model vs Request vs Enrich
+## 8. Pick the Right Record Hook - Model vs Request vs Enrich
 
 **Impact: HIGH (Wrong hook = missing request context, double-fired logic, or leaked fields in realtime events)**
 
@@ -622,7 +788,7 @@ onRecordEnrich((e) => {
 
 Reference: [Go Record request hooks](https://pocketbase.io/docs/go-event-hooks/#record-crud-request-hooks) · [JS Record model hooks](https://pocketbase.io/docs/js-event-hooks/#record-model-hooks)
 
-## 7. Set Up JSVM (pb_hooks) for Server-Side JavaScript
+## 9. Set Up JSVM (pb_hooks) for Server-Side JavaScript
 
 **Impact: HIGH (Correct setup unlocks hot-reload, type-completion, and the full JSVM API)**
 
@@ -675,7 +841,7 @@ onRecordAfterUpdateSuccess((e) => {
 
 Reference: [Extend with JavaScript - Overview](https://pocketbase.io/docs/js-overview/)
 
-## 8. Load Shared Code with CommonJS require() in pb_hooks
+## 10. Load Shared Code with CommonJS require() in pb_hooks
 
 **Impact: MEDIUM (Correct module usage prevents require() failures, race conditions, and ESM import errors)**
 
@@ -776,7 +942,7 @@ onBootstrap((e) => {
 
 Reference: [Extend with JavaScript - Loading modules](https://pocketbase.io/docs/js-overview/#loading-modules)
 
-## 9. Avoid Capturing Variables Outside JSVM Handler Scope
+## 11. Avoid Capturing Variables Outside JSVM Handler Scope
 
 **Impact: HIGH (Variables defined outside a handler are undefined at runtime due to handler serialization)**
 
@@ -841,7 +1007,7 @@ onRecordAfterCreateSuccess((e) => {
 
 Reference: [Extend with JavaScript - Handlers scope](https://pocketbase.io/docs/js-overview/#handlers-scope)
 
-## 10. Register Custom Routes Safely with Built-in Middlewares
+## 12. Register Custom Routes Safely with Built-in Middlewares
 
 **Impact: HIGH (Protects custom endpoints with auth, avoids /api path collisions, inherits rate limiting)**
 
@@ -924,4 +1090,74 @@ routerAdd("POST", "/api/myapp/admin/rebuild-index", (e) => {
 - Order: global middlewares → group middlewares → route middlewares → handler. Use negative priorities to run before built-ins if needed.
 
 Reference: [Go Routing](https://pocketbase.io/docs/go-routing/) · [JS Routing](https://pocketbase.io/docs/js-routing/)
+
+## 13. Use RunInTransaction with the Scoped txApp, Never the Outer App
+
+**Impact: CRITICAL (Mixing scoped and outer app inside a transaction silently deadlocks or writes outside the tx)**
+
+`app.RunInTransaction` (Go) and `$app.runInTransaction` (JS) wrap a block of work in a SQLite write transaction. The callback receives a **transaction-scoped app instance** (`txApp` / `txApp`). Every database call inside the block must go through that scoped instance - reusing the outer `app` / `$app` bypasses the transaction (silent partial writes) or deadlocks (SQLite allows only one writer).
+
+**Incorrect (outer `app` used inside the tx block):**
+
+```go
+// ❌ Uses the outer app for the second Save - deadlocks on the writer lock
+err := app.RunInTransaction(func(txApp core.App) error {
+    user := core.NewRecord(usersCol)
+    user.Set("email", "a@b.co")
+    if err := txApp.Save(user); err != nil {
+        return err
+    }
+
+    audit := core.NewRecord(auditCol)
+    audit.Set("user", user.Id)
+    return app.Save(audit) // ❌ NOT txApp - blocks forever
+})
+```
+
+**Correct (always `txApp` inside the block, return errors to roll back):**
+
+```go
+err := app.RunInTransaction(func(txApp core.App) error {
+    user := core.NewRecord(usersCol)
+    user.Set("email", "a@b.co")
+    if err := txApp.Save(user); err != nil {
+        return err // rollback
+    }
+
+    audit := core.NewRecord(auditCol)
+    audit.Set("user", user.Id)
+    if err := txApp.Save(audit); err != nil {
+        return err // rollback
+    }
+    return nil // commit
+})
+if err != nil {
+    return err
+}
+```
+
+```javascript
+// JSVM - the callback receives the transactional app
+$app.runInTransaction((txApp) => {
+    const user = new Record(txApp.findCollectionByNameOrId("users"));
+    user.set("email", "a@b.co");
+    txApp.save(user);
+
+    const audit = new Record(txApp.findCollectionByNameOrId("audit"));
+    audit.set("user", user.id);
+    txApp.save(audit);
+
+    // throw anywhere in this block to roll back the whole tx
+});
+```
+
+**Rules of the transaction:**
+- **Use only `txApp` / the callback's scoped app** inside the block. Capturing the outer `app` defeats the purpose and can deadlock.
+- Inside event hooks, `e.App` is already the transactional app when the hook fires inside a tx - prefer it over a captured parent-scope `app` for the same reason.
+- Return an error (Go) or `throw` (JS) to roll back. A successful return commits.
+- SQLite serializes writers - keep transactions **short**. Do not make HTTP calls, send emails, or wait on external systems inside the block.
+- Do not start a transaction inside another transaction on the same app - nested `RunInTransaction` on `txApp` is supported and reuses the existing transaction, but nested calls on the outer `app` will deadlock.
+- Hooks (`OnRecordAfterCreateSuccess`, etc.) fired from a `Save` inside a tx run **inside that tx**. Anything they do through `e.App` participates in the rollback; anything they do through a captured outer `app` does not.
+
+Reference: [Go database](https://pocketbase.io/docs/go-database/#transaction) · [JS database](https://pocketbase.io/docs/js-database/#transaction)
 

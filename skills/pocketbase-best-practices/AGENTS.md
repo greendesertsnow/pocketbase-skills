@@ -4,7 +4,7 @@
 Community
 April 2026
 
-> Comprehensive PocketBase development best practices and performance optimization guide. Contains 53 rules across 9 categories, prioritized by impact from critical (collection design, API rules, authentication) to incremental (production deployment). Includes server-side extending rules for Go and JavaScript (JSVM) modules, cron job scheduling, and Go schema migrations. Updated for PocketBase v0.36.8 and JS SDK v0.26.8 (getFullList default batch size 1000, authWithOAuth2 cancellation fix, getURL null param handling). Each rule includes detailed explanations, incorrect vs. correct code examples, and specific guidance to help AI agents generate better PocketBase code.
+> Comprehensive PocketBase development best practices and performance optimization guide. Contains 58 rules across 9 categories, prioritized by impact from critical (collection design, API rules, authentication) to incremental (production deployment). Includes server-side extending rules for Go and JavaScript (JSVM): event hooks, custom routing, transactions with scoped txApp, server-side filter binding, filesystem handling, cron job scheduling, and Go schema migrations. Updated for PocketBase v0.36.8 and JS SDK v0.26.8 (getFullList default batch size 1000, authWithOAuth2 cancellation fix, getURL null param handling, v0.36.7 fixed-window rate limiter, v0.36.0 strftime() filter function, OTP auth flow). Each rule includes detailed explanations, incorrect vs. correct code examples, and specific guidance to help AI agents generate better PocketBase code.
 
 ---
 
@@ -32,6 +32,7 @@ Access control rules, filter expressions, request context usage, and security pa
 - 2.3 Master Filter Expression Syntax
 - 2.4 Default to Locked Rules, Open Explicitly
 - 2.5 Use @request Context in API Rules
+- 2.6 Use strftime() for Date Arithmetic in Filter Expressions
 
 ### 3. [Authentication](references/authentication.md) - **CRITICAL**
 
@@ -40,8 +41,9 @@ Password authentication, OAuth2 integration, token management, MFA setup, and au
 - 3.1 Use Impersonation for Admin Operations
 - 3.2 Implement Multi-Factor Authentication
 - 3.3 Integrate OAuth2 Providers Correctly
-- 3.4 Implement Secure Password Authentication
-- 3.5 Manage Auth Tokens Properly
+- 3.4 Use authWithOTP for Email One-Time Codes, Rate-Limit requestOTP
+- 3.5 Implement Secure Password Authentication
+- 3.6 Manage Auth Tokens Properly
 
 ### 4. [SDK Usage](references/sdk-usage.md) - **HIGH**
 
@@ -100,15 +102,18 @@ Backup strategies, configuration management, reverse proxy setup, and SQLite opt
 Extending PocketBase with Go or embedded JavaScript (JSVM) - event hooks, custom routes, transactions, cron jobs, filesystem, migrations, and safe server-side filter binding.
 
 - 9.1 Schedule Recurring Jobs with the Builtin Cron Scheduler
-- 9.2 Use DBConnect Only When You Need a Custom SQLite Driver
-- 9.3 Version Your Schema with Go Migrations
-- 9.4 Set Up a Go-Extended PocketBase Application
-- 9.5 Always Call e.Next() and Use e.App Inside Hook Handlers
-- 9.6 Pick the Right Record Hook - Model vs Request vs Enrich
-- 9.7 Set Up JSVM (pb_hooks) for Server-Side JavaScript
-- 9.8 Load Shared Code with CommonJS require() in pb_hooks
-- 9.9 Avoid Capturing Variables Outside JSVM Handler Scope
-- 9.10 Register Custom Routes Safely with Built-in Middlewares
+- 9.2 Always Close the Filesystem Handle Returned by NewFilesystem
+- 9.3 Bind User Input in Server-Side Filters with {:placeholder} Params
+- 9.4 Use DBConnect Only When You Need a Custom SQLite Driver
+- 9.5 Version Your Schema with Go Migrations
+- 9.6 Set Up a Go-Extended PocketBase Application
+- 9.7 Always Call e.Next() and Use e.App Inside Hook Handlers
+- 9.8 Pick the Right Record Hook - Model vs Request vs Enrich
+- 9.9 Set Up JSVM (pb_hooks) for Server-Side JavaScript
+- 9.10 Load Shared Code with CommonJS require() in pb_hooks
+- 9.11 Avoid Capturing Variables Outside JSVM Handler Scope
+- 9.12 Register Custom Routes Safely with Built-in Middlewares
+- 9.13 Use RunInTransaction with the Scoped txApp, Never the Outer App
 
 ---
 

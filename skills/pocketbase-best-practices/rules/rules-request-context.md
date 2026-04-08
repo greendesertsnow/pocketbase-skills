@@ -70,7 +70,7 @@ listRule: 'team.members ?= @request.auth.id'
 | `@request.query.*` | URL query parameters |
 | `@request.headers.*` | Request headers |
 | `@request.method` | HTTP method (GET, POST, etc.) |
-| `@request.context` | Request context (default, realtime, etc.) |
+| `@request.context` | Request context: `default`, `oauth2`, `otp`, `password`, `realtime`, `protectedFile` |
 
 **Body field modifiers:**
 

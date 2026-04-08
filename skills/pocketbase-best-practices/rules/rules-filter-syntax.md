@@ -84,4 +84,10 @@ filter: 'expires < @today'      // Start of today (UTC)
 - `@month` - Start of current month UTC
 - `@year` - Start of current year UTC
 
+**Filter functions:**
+- `strftime(fmt, datetime)` - Format/extract datetime parts (v0.36+). E.g. `strftime('%Y-%m', created) = "2026-03"`. See `rules-strftime.md` for the full format specifier list.
+- `length(field)` - Element count of a multi-value field (file, relation, select). E.g. `length(tags) > 0`.
+- `each(field, expr)` - Iterate a multi-value field: `each(tags, ? ~ "urgent")`.
+- `issetIf(field, val)` - Conditional presence check for complex rules.
+
 Reference: [PocketBase Filters](https://pocketbase.io/docs/api-rules-and-filters/#filters-syntax)

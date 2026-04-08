@@ -9,6 +9,8 @@ tags: production, security, rate-limiting, abuse-prevention
 
 PocketBase v0.23+ includes built-in rate limiting. Enable it to protect against brute-force attacks, API abuse, and excessive resource consumption.
 
+> **v0.36.7 behavioral change:** the built-in limiter switched from a sliding-window to a **fixed-window** strategy. This is cheaper and more predictable, but it means a client can send `2 * maxRequests` in quick succession if they straddle the window boundary. Size your limits with that worst case in mind, and put Nginx/Caddy rate limiting in front of PocketBase for defense in depth (see examples below).
+
 **Incorrect (no rate limiting):**
 
 ```bash

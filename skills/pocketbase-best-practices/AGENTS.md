@@ -4,7 +4,7 @@
 Community
 April 2026
 
-> Comprehensive PocketBase development best practices and performance optimization guide. Contains 58 rules across 9 categories, prioritized by impact from critical (collection design, API rules, authentication) to incremental (production deployment). Includes server-side extending rules for Go and JavaScript (JSVM): event hooks, custom routing, transactions with scoped txApp, server-side filter binding, filesystem handling, cron job scheduling, and Go schema migrations. Updated for PocketBase v0.36.8 and JS SDK v0.26.8 (getFullList default batch size 1000, authWithOAuth2 cancellation fix, getURL null param handling, v0.36.7 fixed-window rate limiter, v0.36.0 strftime() filter function, OTP auth flow). Each rule includes detailed explanations, incorrect vs. correct code examples, and specific guidance to help AI agents generate better PocketBase code.
+> Comprehensive PocketBase development best practices and performance optimization guide. Contains 63 rules across 9 categories, prioritized by impact from critical (collection design, API rules, authentication) to incremental (production deployment). Includes server-side extending rules for Go and JavaScript (JSVM): event hooks, custom routing, transactions with scoped txApp, server-side filter binding, filesystem handling, cron job scheduling, and Go schema migrations. Updated for PocketBase v0.36.8 and JS SDK v0.26.8 (getFullList default batch size 1000, authWithOAuth2 cancellation fix, getURL null param handling, v0.36.7 fixed-window rate limiter, v0.36.0 strftime() filter function, OTP auth flow). Each rule includes detailed explanations, incorrect vs. correct code examples, and specific guidance to help AI agents generate better PocketBase code.
 
 ---
 
@@ -101,19 +101,24 @@ Backup strategies, configuration management, reverse proxy setup, and SQLite opt
 
 Extending PocketBase with Go or embedded JavaScript (JSVM) - event hooks, custom routes, transactions, cron jobs, filesystem, migrations, and safe server-side filter binding.
 
-- 9.1 Schedule Recurring Jobs with the Builtin Cron Scheduler
-- 9.2 Always Close the Filesystem Handle Returned by NewFilesystem
-- 9.3 Bind User Input in Server-Side Filters with {:placeholder} Params
-- 9.4 Use DBConnect Only When You Need a Custom SQLite Driver
-- 9.5 Version Your Schema with Go Migrations
-- 9.6 Set Up a Go-Extended PocketBase Application
-- 9.7 Always Call e.Next() and Use e.App Inside Hook Handlers
-- 9.8 Pick the Right Record Hook - Model vs Request vs Enrich
-- 9.9 Set Up JSVM (pb_hooks) for Server-Side JavaScript
-- 9.10 Load Shared Code with CommonJS require() in pb_hooks
-- 9.11 Avoid Capturing Variables Outside JSVM Handler Scope
-- 9.12 Register Custom Routes Safely with Built-in Middlewares
-- 9.13 Use RunInTransaction with the Scoped txApp, Never the Outer App
+- 9.1 Compose Hooks, Transactions, Routing, and Enrich in One Request Flow
+- 9.2 Schedule Recurring Jobs with the Builtin Cron Scheduler
+- 9.3 Always Close the Filesystem Handle Returned by NewFilesystem
+- 9.4 Bind User Input in Server-Side Filters with {:placeholder} Params
+- 9.5 Use DBConnect Only When You Need a Custom SQLite Driver
+- 9.6 Version Your Schema with Go Migrations
+- 9.7 Set Up a Go-Extended PocketBase Application
+- 9.8 Always Call e.Next() and Use e.App Inside Hook Handlers
+- 9.9 Pick the Right Record Hook - Model vs Request vs Enrich
+- 9.10 Write JSVM Migrations as pb_migrations/*.js Files
+- 9.11 Set Up JSVM (pb_hooks) for Server-Side JavaScript
+- 9.12 Load Shared Code with CommonJS require() in pb_hooks
+- 9.13 Avoid Capturing Variables Outside JSVM Handler Scope
+- 9.14 Send Email via app.NewMailClient, Never the Default example.com Sender
+- 9.15 Register Custom Routes Safely with Built-in Middlewares
+- 9.16 Read Settings via app.Settings(), Encrypt at Rest with PB_ENCRYPTION
+- 9.17 Test Hooks and Routes with tests.NewTestApp and ApiScenario
+- 9.18 Use RunInTransaction with the Scoped txApp, Never the Outer App
 
 ---
 

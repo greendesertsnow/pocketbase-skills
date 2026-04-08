@@ -12,7 +12,7 @@ metadata:
 
 # PocketBase Best Practices
 
-58 rules across 9 categories for PocketBase v0.36+, prioritized by impact.
+63 rules across 9 categories for PocketBase v0.36+, prioritized by impact.
 
 ## Categories by Priority
 
@@ -26,7 +26,7 @@ metadata:
 | 6 | Realtime | MEDIUM | realtime-subscribe, realtime-events, realtime-auth, realtime-reconnection |
 | 7 | File Handling | MEDIUM | file-upload, file-serving, file-validation |
 | 8 | Production & Deployment | MEDIUM | deploy-backup, deploy-configuration, deploy-reverse-proxy, deploy-sqlite-considerations, deploy-rate-limiting, deploy-scaling |
-| 9 | Server-Side Extending | HIGH | ext-go-setup, ext-js-setup, ext-hooks-chain, ext-hooks-record-vs-request, ext-routing-custom, ext-transactions, ext-filter-binding-server, ext-filesystem, ext-cron-jobs, ext-go-migrations, ext-go-custom-sqlite, ext-jsvm-scope, ext-jsvm-modules |
+| 9 | Server-Side Extending | HIGH | ext-go-setup, ext-js-setup, ext-hooks-chain, ext-hooks-record-vs-request, ext-routing-custom, ext-transactions, ext-filter-binding-server, ext-filesystem, ext-cron-jobs, ext-go-migrations, ext-js-migrations, ext-mailer, ext-settings, ext-testing, ext-compose-request-flow, ext-go-custom-sqlite, ext-jsvm-scope, ext-jsvm-modules |
 
 ## Quick Reference
 
@@ -97,6 +97,11 @@ metadata:
 - **ext-filesystem**: `defer fs.Close()` on every `NewFilesystem()` / `NewBackupsFilesystem()` handle
 - **ext-cron-jobs**: Register with `app.Cron().MustAdd(id, expr, fn)` / `cronAdd()`; stable ids, no `__pb*__` prefix
 - **ext-go-migrations**: Versioned `.go` files under `migrations/`; `Automigrate: osutils.IsProbablyGoRun()`
+- **ext-js-migrations**: `pb_migrations/<unix>_*.js` with `migrate(upFn, downFn)`; auto-discovered by filename
+- **ext-mailer**: Resolve sender from `app.Settings().Meta` at send-time; never ship `no-reply@example.com`; create the mail client per send
+- **ext-settings**: Read via `app.Settings()` at call time; set `PB_ENCRYPTION` (32 chars) to encrypt `_params` at rest
+- **ext-testing**: `tests.NewTestApp(testDataDir)` + `tests.ApiScenario`; `defer app.Cleanup()`, assert `ExpectedEvents`
+- **ext-compose-request-flow**: Composite walkthrough showing which app instance is active at each layer (route → tx → hook → enrich)
 - **ext-go-custom-sqlite**: Only use `DBConnect` when you need FTS5/ICU; `DBConnect` is called twice (data.db + auxiliary.db)
 - **ext-jsvm-scope**: Variables outside handlers are undefined at runtime — load shared config via `require()` inside the handler
 - **ext-jsvm-modules**: Only CJS (`require()`) works in goja; bundle ESM first; avoid mutable module state

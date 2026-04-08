@@ -6,7 +6,201 @@ Extending PocketBase with Go or embedded JavaScript (JSVM) - event hooks, custom
 
 ---
 
-## 1. Schedule Recurring Jobs with the Builtin Cron Scheduler
+## 1. Compose Hooks, Transactions, Routing, and Enrich in One Request Flow
+
+**Impact: HIGH (Individual rules are atomic; this composite example shows which app instance applies at each layer and how errors propagate)**
+
+The atomic rules (`ext-hooks-chain`, `ext-transactions`, `ext-routing-custom`, `ext-hooks-record-vs-request`, `ext-filesystem`, `ext-filter-binding-server`) each teach a single trap. Real extending code touches **all of them in the same handler**. This rule walks through one complete request flow and annotates **which app instance is active at each layer** - the single most common source of extending bugs is reaching for the wrong one.
+
+### The flow
+
+`POST /api/myapp/posts` that: authenticates the caller, validates uniqueness with a bound filter, creates a record inside a transaction, uploads a thumbnail through a scoped filesystem, writes an audit log from an `OnRecordAfterCreateSuccess` hook, and shapes the response (including the realtime broadcast) in `OnRecordEnrich`.
+
+```
+HTTP request
+ │
+ ▼
+[group middleware]  apis.RequireAuth("users")          ◄── e.Auth is set after this
+ │
+ ▼
+[route handler]     se.App.RunInTransaction(func(txApp) {
+ │                    // ⚠️ inside the block, use ONLY txApp, never se.App or outer `app`
+ │                    FindFirstRecordByFilter(txApp, ...) // bound {:slug}
+ │                    txApp.Save(post)                     // fires OnRecord*Create / *Request
+ │                        │
+ │                        ▼
+ │                     [OnRecordAfterCreateSuccess hook]  ◄── e.App IS txApp here
+ │                        │                                    (hook fires inside the tx)
+ │                        e.App.Save(auditRecord)              → participates in rollback
+ │                        e.Next()                             → REQUIRED
+ │                        │
+ │                        ▼
+ │                     return to route handler
+ │                    fs := txApp.NewFilesystem()
+ │                    defer fs.Close()
+ │                    post.Set("thumb", file); txApp.Save(post)
+ │                    return nil  // commit
+ │                  })
+ │
+ ▼
+[enrich pass]       OnRecordEnrich fires                ◄── RUNS AFTER the tx committed
+ │                   (also fires for realtime SSE and list responses)
+ │                   e.App is the outer app; tx is already closed
+ ▼
+[response serialization] e.JSON(...)
+```
+
+### The code
+
+```go
+app.OnServe().BindFunc(func(se *core.ServeEvent) error {
+    g := se.Router.Group("/api/myapp")
+    g.Bind(apis.RequireAuth("users"))
+
+    g.POST("/posts", func(e *core.RequestEvent) error {
+        // ── Layer 1: route handler ────────────────────────────────────────
+        // e.App is the top-level app. e.Auth is populated by RequireAuth.
+        // e.RequestInfo holds headers/body/query.
+        body := struct {
+            Slug  string `json:"slug"`
+            Title string `json:"title"`
+        }{}
+        if err := e.BindBody(&body); err != nil {
+            return e.BadRequestError("invalid body", err)
+        }
+
+        var created *core.Record
+
+        // ── Layer 2: transaction ──────────────────────────────────────────
+        txErr := e.App.RunInTransaction(func(txApp core.App) error {
+            // ⚠️ From here until the closure returns, every DB call MUST go
+            //    through txApp. Capturing e.App or the outer `app` deadlocks
+            //    on the writer lock.
+
+            // Bound filter - see ext-filter-binding-server
+            existing, _ := txApp.FindFirstRecordByFilter(
+                "posts",
+                "slug = {:slug}",
+                dbx.Params{"slug": body.Slug},
+            )
+            if existing != nil {
+                return apis.NewBadRequestError("slug already taken", nil)
+            }
+
+            col, err := txApp.FindCollectionByNameOrId("posts")
+            if err != nil {
+                return err
+            }
+            post := core.NewRecord(col)
+            post.Set("slug", body.Slug)
+            post.Set("title", body.Title)
+            post.Set("author", e.Auth.Id)
+
+            // txApp.Save fires record hooks INSIDE the tx
+            if err := txApp.Save(post); err != nil {
+                return err
+            }
+
+            // ── Layer 3: filesystem (scoped to this request) ─────────────
+            fs, err := txApp.NewFilesystem()
+            if err != nil {
+                return err
+            }
+            defer fs.Close() // REQUIRED - see ext-filesystem
+
+            if uploaded, ok := e.RequestInfo.Body["thumb"].(*filesystem.File); ok {
+                post.Set("thumb", uploaded)
+                if err := txApp.Save(post); err != nil {
+                    return err
+                }
+            }
+
+            created = post
+            return nil // commit
+        })
+        if txErr != nil {
+            return txErr // framework maps it to a proper HTTP error
+        }
+
+        // ── Layer 5: response (enrich runs automatically) ────────────────
+        // e.App is the OUTER app again here - the tx has committed.
+        // OnRecordEnrich will fire during JSON serialization and for any
+        // realtime subscribers receiving the "create" event.
+        return e.JSON(http.StatusOK, created)
+    })
+
+    return se.Next()
+})
+
+// ── Layer 4: hooks ──────────────────────────────────────────────────────
+// These are registered once at startup, NOT inside the route handler.
+
+app.OnRecordAfterCreateSuccess("posts").Bind(&hook.Handler[*core.RecordEvent]{
+    Id: "audit-post-create",
+    Func: func(e *core.RecordEvent) error {
+        // ⚠️ e.App here is txApp when the parent Save happened inside a tx.
+        //    Always use e.App - never a captured outer `app` - so that the
+        //    audit record participates in the same transaction (and the
+        //    same rollback) as the parent Save.
+        col, err := e.App.FindCollectionByNameOrId("audit")
+        if err != nil {
+            return err
+        }
+        audit := core.NewRecord(col)
+        audit.Set("action", "post.create")
+        audit.Set("record", e.Record.Id)
+        audit.Set("actor", e.Record.GetString("author"))
+        if err := e.App.Save(audit); err != nil {
+            return err // rolls back the whole request
+        }
+        return e.Next() // REQUIRED - see ext-hooks-chain
+    },
+})
+
+app.OnRecordEnrich("posts").BindFunc(func(e *core.RecordEnrichEvent) error {
+    // Runs for:
+    //   - GET /api/collections/posts/records (list)
+    //   - GET /api/collections/posts/records/{id} (view)
+    //   - realtime SSE create/update broadcasts
+    //   - any apis.EnrichRecord call in a custom route
+    // Does NOT run inside a transaction; e.App is the outer app.
+    e.Record.Hide("internalNotes")
+
+    if e.RequestInfo != nil && e.RequestInfo.Auth != nil {
+        e.Record.WithCustomData(true)
+        e.Record.Set("isMine", e.Record.GetString("author") == e.RequestInfo.Auth.Id)
+    }
+    return e.Next()
+})
+```
+
+### The cheat sheet: "which app am I holding?"
+
+| Where you are | Use | Why |
+|---|---|---|
+| Top of a route handler (`func(e *core.RequestEvent)`) | `e.App` | Framework's top-level app; same object the server started with |
+| Inside `RunInTransaction(func(txApp) { ... })` | `txApp` **only** | Capturing the outer app deadlocks on the SQLite writer lock |
+| Inside a record hook fired from a `Save` inside a tx | `e.App` | The framework has already rebound `e.App` to `txApp` for you |
+| Inside a record hook fired from a non-tx `Save` | `e.App` | Same identifier, same rules, just points to the top-level app |
+| Inside `OnRecordEnrich` | `e.App` | Runs during response serialization, **after** the tx has committed |
+| Inside a `app.Cron()` callback | captured `app` / `se.App` | Cron has no per-run scoped app; wrap in `RunInTransaction` if you need atomicity |
+| Inside a migration function | the `app` argument | `m.Register(func(app core.App) error { ... })` - already transactional |
+
+### Error propagation in the chain
+
+- `return err` inside `RunInTransaction` → **rolls back everything**, including any audit records written by hooks that fired from nested `Save` calls.
+- `return err` from a hook handler → propagates back through the `Save` call → propagates out of the tx closure → rolls back.
+- **Not** calling `e.Next()` in a hook → the chain is broken **silently**. The framework's own post-save work (realtime broadcast, enrich pass, activity log) is skipped but no error is reported.
+- A panic inside the tx closure is recovered by PocketBase, the tx rolls back, and the panic is converted to a 500 response.
+- A panic inside a cron callback is recovered and logged - it does **not** take down the process.
+
+### When NOT to compose this much
+
+This example is realistic but also the ceiling of what should live in a single handler. If you find yourself stacking six concerns in one route, consider splitting the logic into a service function that takes `txApp` as a parameter and is called by the route. The same function is then reusable from cron jobs, migrations, and tests.
+
+Reference: cross-references `ext-hooks-chain.md`, `ext-transactions.md`, `ext-routing-custom.md`, `ext-hooks-record-vs-request.md`, `ext-filesystem.md`, `ext-filter-binding-server.md`.
+
+## 2. Schedule Recurring Jobs with the Builtin Cron Scheduler
 
 **Impact: MEDIUM (Avoids external schedulers and correctly integrates background tasks with the PocketBase lifecycle)**
 
@@ -128,7 +322,7 @@ Examples:
 
 Reference: [Go – Jobs scheduling](https://pocketbase.io/docs/go-jobs-scheduling/) | [JS – Jobs scheduling](https://pocketbase.io/docs/js-jobs-scheduling/)
 
-## 2. Always Close the Filesystem Handle Returned by NewFilesystem
+## 3. Always Close the Filesystem Handle Returned by NewFilesystem
 
 **Impact: HIGH (Leaked filesystem clients keep S3 connections and file descriptors open until the process exits)**
 
@@ -217,7 +411,7 @@ try {
 
 Reference: [Go Filesystem](https://pocketbase.io/docs/go-filesystem/) · [JS Filesystem](https://pocketbase.io/docs/js-filesystem/)
 
-## 3. Bind User Input in Server-Side Filters with {:placeholder} Params
+## 4. Bind User Input in Server-Side Filters with {:placeholder} Params
 
 **Impact: CRITICAL (String-concatenating user input into filter expressions is a direct injection vulnerability)**
 
@@ -294,7 +488,7 @@ const recs = $app.findRecordsByFilter(
 
 Reference: [Go database - FindRecordsByFilter](https://pocketbase.io/docs/go-records/#fetch-records-via-filter-expression) · [JS database - findRecordsByFilter](https://pocketbase.io/docs/js-records/#fetch-records-via-filter-expression)
 
-## 4. Use DBConnect Only When You Need a Custom SQLite Driver
+## 5. Use DBConnect Only When You Need a Custom SQLite Driver
 
 **Impact: MEDIUM (Incorrect driver setup breaks both data.db and auxiliary.db, or introduces unnecessary CGO)**
 
@@ -426,7 +620,7 @@ app := pocketbase.NewWithConfig(pocketbase.Config{
 
 Reference: [Extend with Go - Custom SQLite driver](https://pocketbase.io/docs/go-overview/#custom-sqlite-driver)
 
-## 5. Version Your Schema with Go Migrations
+## 6. Version Your Schema with Go Migrations
 
 **Impact: HIGH (Guarantees repeatable, transactional schema evolution and eliminates manual dashboard changes in production)**
 
@@ -561,7 +755,7 @@ go run . migrate down 1    # revert the last applied migration
 
 Reference: [Extend with Go – Migrations](https://pocketbase.io/docs/go-migrations/)
 
-## 6. Set Up a Go-Extended PocketBase Application
+## 7. Set Up a Go-Extended PocketBase Application
 
 **Impact: HIGH (Foundation for all custom Go business logic, hooks, and routing)**
 
@@ -650,7 +844,7 @@ go build && ./myapp serve  # production (statically linked binary)
 
 Reference: [Extend with Go - Overview](https://pocketbase.io/docs/go-overview/)
 
-## 7. Always Call e.Next() and Use e.App Inside Hook Handlers
+## 8. Always Call e.Next() and Use e.App Inside Hook Handlers
 
 **Impact: CRITICAL (Forgetting e.Next() silently breaks the execution chain; reusing parent-scope app causes deadlocks)**
 
@@ -728,7 +922,7 @@ onRecordAfterCreateSuccess((e) => {
 
 Reference: [Go Event hooks](https://pocketbase.io/docs/go-event-hooks/) · [JS Event hooks](https://pocketbase.io/docs/js-event-hooks/)
 
-## 8. Pick the Right Record Hook - Model vs Request vs Enrich
+## 9. Pick the Right Record Hook - Model vs Request vs Enrich
 
 **Impact: HIGH (Wrong hook = missing request context, double-fired logic, or leaked fields in realtime events)**
 
@@ -788,7 +982,108 @@ onRecordEnrich((e) => {
 
 Reference: [Go Record request hooks](https://pocketbase.io/docs/go-event-hooks/#record-crud-request-hooks) · [JS Record model hooks](https://pocketbase.io/docs/js-event-hooks/#record-model-hooks)
 
-## 9. Set Up JSVM (pb_hooks) for Server-Side JavaScript
+## 10. Write JSVM Migrations as pb_migrations/*.js Files
+
+**Impact: HIGH (JSVM migrations look different from Go ones; missing the timestamp prefix or the down-callback silently breaks replay)**
+
+JSVM migrations live in `pb_migrations/` next to the executable. Unlike Go migrations (which use `init()` + `m.Register(...)` inside a package imported from `main.go`), JSVM migrations are **auto-discovered by filename** and call the global `migrate()` function with an `up` callback and an optional `down` callback. `--automigrate` is on by default in v0.36+, so admin-UI changes generate these files for you; you also write them by hand for data migrations, seed data, and index changes that the UI can't express.
+
+**Incorrect (wrong filename format, missing down, raw SQL without cache invalidation):**
+
+```javascript
+// pb_migrations/add_audit.js   ❌ missing <unix>_ prefix - never runs
+migrate((app) => {
+    // ❌ Raw ALTER TABLE leaves PocketBase's internal collection cache stale
+    app.db().newQuery(
+        "ALTER TABLE posts ADD COLUMN summary TEXT DEFAULT ''"
+    ).execute();
+});
+// ❌ No down callback - `migrate down` cannot revert this in dev
+```
+
+**Correct (timestamped filename, collection API, both up and down):**
+
+```javascript
+// pb_migrations/1712500000_add_audit_collection.js
+/// <reference path="../pb_data/types.d.ts" />
+
+migrate(
+    // UP - runs on `serve` / `migrate up`
+    (app) => {
+        const collection = new Collection({
+            type: "base",
+            name: "audit",
+            fields: [
+                { name: "action", type: "text", required: true },
+                { name: "actor",  type: "relation", collectionId: "_pb_users_auth_", cascadeDelete: false },
+                { name: "meta",   type: "json" },
+                { name: "created", type: "autodate", onCreate: true },
+            ],
+            indexes: [
+                "CREATE INDEX idx_audit_actor ON audit (actor)",
+                "CREATE INDEX idx_audit_created ON audit (created)",
+            ],
+        });
+        app.save(collection);
+    },
+    // DOWN - runs on `migrate down N`
+    (app) => {
+        const collection = app.findCollectionByNameOrId("audit");
+        app.delete(collection);
+    },
+);
+```
+
+**Seed data migration (common pattern):**
+
+```javascript
+// pb_migrations/1712500100_seed_default_tags.js
+/// <reference path="../pb_data/types.d.ts" />
+
+migrate(
+    (app) => {
+        const tags = app.findCollectionByNameOrId("tags");
+        for (const name of ["urgent", "bug", "feature", "docs"]) {
+            const r = new Record(tags);
+            r.set("name", name);
+            app.save(r); // `app` here is the transactional app - all or nothing
+        }
+    },
+    (app) => {
+        const tags = app.findCollectionByNameOrId("tags");
+        for (const name of ["urgent", "bug", "feature", "docs"]) {
+            const r = app.findFirstRecordByFilter(
+                "tags",
+                "name = {:name}",
+                { name },
+            );
+            if (r) app.delete(r);
+        }
+    },
+);
+```
+
+**CLI commands (same as Go migrations):**
+
+```bash
+./pocketbase migrate create "add_audit_collection"  # templated blank file
+./pocketbase migrate up                              # apply pending
+./pocketbase migrate down 1                          # revert last
+./pocketbase migrate history-sync                    # reconcile _migrations table
+```
+
+**Rules:**
+- **Filename format**: `<unix_timestamp>_<description>.js`. The timestamp sets ordering. Never renumber a committed file.
+- **The `app` argument is transactional**: every migration runs inside its own transaction. Throw to roll back. Do not capture `$app` from the outer scope - use the `app` parameter so the work participates in the tx.
+- **Use the collection API** (`new Collection`, `app.save(collection)`), not raw `ALTER TABLE`. Raw SQL leaves PocketBase's in-memory schema cache stale until the next restart.
+- **Always write the down callback** in development. In production, down migrations are rare but the callback is what makes `migrate down 1` work during emergency rollbacks.
+- **Do not import from other files** - goja has no ES modules, and at migration time the `pb_hooks` loader has not necessarily run. Keep each migration self-contained.
+- **Commit `pb_migrations/` to version control**. Never commit `pb_data/`.
+- **Conflicting with Go migrations**: you can run either Go or JS migrations, not a mix of both in the same project. JSVM migrations are enabled by default; Go migrations require `migratecmd.MustRegister(...)` in `main.go`.
+
+Reference: [Extend with JavaScript - Migrations](https://pocketbase.io/docs/js-migrations/)
+
+## 11. Set Up JSVM (pb_hooks) for Server-Side JavaScript
 
 **Impact: HIGH (Correct setup unlocks hot-reload, type-completion, and the full JSVM API)**
 
@@ -841,7 +1136,7 @@ onRecordAfterUpdateSuccess((e) => {
 
 Reference: [Extend with JavaScript - Overview](https://pocketbase.io/docs/js-overview/)
 
-## 10. Load Shared Code with CommonJS require() in pb_hooks
+## 12. Load Shared Code with CommonJS require() in pb_hooks
 
 **Impact: MEDIUM (Correct module usage prevents require() failures, race conditions, and ESM import errors)**
 
@@ -942,7 +1237,7 @@ onBootstrap((e) => {
 
 Reference: [Extend with JavaScript - Loading modules](https://pocketbase.io/docs/js-overview/#loading-modules)
 
-## 11. Avoid Capturing Variables Outside JSVM Handler Scope
+## 13. Avoid Capturing Variables Outside JSVM Handler Scope
 
 **Impact: HIGH (Variables defined outside a handler are undefined at runtime due to handler serialization)**
 
@@ -1007,7 +1302,117 @@ onRecordAfterCreateSuccess((e) => {
 
 Reference: [Extend with JavaScript - Handlers scope](https://pocketbase.io/docs/js-overview/#handlers-scope)
 
-## 12. Register Custom Routes Safely with Built-in Middlewares
+## 14. Send Email via app.NewMailClient, Never the Default example.com Sender
+
+**Impact: HIGH (Default sender is no-reply@example.com; shipping it bounces every email and damages your SMTP reputation)**
+
+PocketBase ships with a mailer accessible through `app.NewMailClient()` (Go) or `$app.newMailClient()` (JS). It reads the SMTP settings configured in **Admin UI → Settings → Mail settings**, or falls back to a local `sendmail`-like client if SMTP is not configured. Two things bite people: (1) the default `Meta.senderAddress` is `no-reply@example.com` - shipping with that bounces every email and poisons your sender reputation; (2) there is no connection pooling, so long-lived mail client handles are **not** safe to share across requests - create one per send.
+
+**Incorrect (default sender, shared client, no error handling):**
+
+```go
+// ❌ Default sender is example.com, and this mailer instance is captured
+//    for the process lifetime - SMTP connections go stale
+var mailer = app.NewMailClient()
+
+app.OnRecordAfterCreateSuccess("orders").BindFunc(func(e *core.RecordEvent) error {
+    msg := &mailer.Message{
+        From:    mail.Address{Address: "no-reply@example.com"}, // ❌
+        To:      []mail.Address{{Address: e.Record.GetString("email")}},
+        Subject: "Order confirmed",
+        HTML:    "<p>Thanks</p>",
+    }
+    mailer.Send(msg) // ❌ error swallowed
+    return e.Next()
+})
+```
+
+**Correct (sender from settings, per-send client, explicit error path):**
+
+```go
+import (
+    "net/mail"
+    pbmail "github.com/pocketbase/pocketbase/tools/mailer"
+)
+
+app.OnRecordAfterCreateSuccess("orders").BindFunc(func(e *core.RecordEvent) error {
+    // IMPORTANT: resolve the sender from settings at send-time, not at
+    // startup - an admin can change it live from the UI
+    meta := e.App.Settings().Meta
+    from := mail.Address{
+        Name:    meta.SenderName,
+        Address: meta.SenderAddress,
+    }
+
+    msg := &pbmail.Message{
+        From:    from,
+        To:      []mail.Address{{Address: e.Record.GetString("email")}},
+        Subject: "Order confirmed",
+        HTML:    renderOrderEmail(e.Record), // your template function
+    }
+
+    // Create the client per send - avoids stale TCP sessions
+    if err := e.App.NewMailClient().Send(msg); err != nil {
+        e.App.Logger().Error("order email send failed",
+            "err",      err,
+            "recordId", e.Record.Id,
+        )
+        // Do NOT return the error - a failed email should not roll back the order
+    }
+    return e.Next()
+})
+```
+
+```javascript
+// JSVM - $mails global exposes message factories
+onRecordAfterCreateSuccess((e) => {
+    const meta = $app.settings().meta;
+
+    const message = new MailerMessage({
+        from: {
+            address: meta.senderAddress,
+            name:    meta.senderName,
+        },
+        to:      [{ address: e.record.get("email") }],
+        subject: "Order confirmed",
+        html:    `<p>Thanks for order ${e.record.id}</p>`,
+    });
+
+    try {
+        $app.newMailClient().send(message);
+    } catch (err) {
+        $app.logger().error("order email send failed", "err", err, "id", e.record.id);
+        // swallow - do not rollback the order
+    }
+    e.next();
+}, "orders");
+```
+
+**Templated emails via the built-in verification/reset templates:**
+
+```go
+// PocketBase has baked-in templates for verification, password reset, and
+// email change. Trigger them via apis.*Request helpers rather than building
+// your own message:
+//   apis.RecordRequestPasswordReset(app, authRecord)
+//   apis.RecordRequestVerification(app, authRecord)
+//   apis.RecordRequestEmailChange(app, authRecord, newEmail)
+//
+// These use the templates configured in Admin UI → Settings → Mail templates.
+```
+
+**Rules:**
+- **Always change `Meta.SenderAddress`** before shipping. In development, use Mailpit or MailHog; in production, use a verified domain that matches your SPF/DKIM records.
+- **Resolve the sender from `app.Settings().Meta` at send-time**, not at startup. Settings are mutable from the admin UI.
+- **Create the client per send** (`app.NewMailClient()` / `$app.newMailClient()`). It is cheap - it re-reads the SMTP settings each time, so config changes take effect without a restart.
+- **Never return a send error from a hook** unless the user's action genuinely depends on the email going out. Email failure is common (transient SMTP, address typo) and should not roll back a business transaction.
+- **Log failures with context** (record id, recipient domain) so you can grep them later. PocketBase does not retry failed sends.
+- **For bulk sending, queue it**. The mailer is synchronous - looping `Send()` over 10k records blocks the request. Push to a cron-drained queue collection instead.
+- **Template rendering**: Go users should use `html/template`; JS users can use template literals or pull in a tiny template lib. PocketBase itself only renders templates for its baked-in flows.
+
+Reference: [Go Mailer](https://pocketbase.io/docs/go-sending-emails/) · [JS Mailer](https://pocketbase.io/docs/js-sending-emails/)
+
+## 15. Register Custom Routes Safely with Built-in Middlewares
 
 **Impact: HIGH (Protects custom endpoints with auth, avoids /api path collisions, inherits rate limiting)**
 
@@ -1091,7 +1496,259 @@ routerAdd("POST", "/api/myapp/admin/rebuild-index", (e) => {
 
 Reference: [Go Routing](https://pocketbase.io/docs/go-routing/) · [JS Routing](https://pocketbase.io/docs/js-routing/)
 
-## 13. Use RunInTransaction with the Scoped txApp, Never the Outer App
+## 16. Read Settings via app.Settings(), Encrypt at Rest with PB_ENCRYPTION
+
+**Impact: HIGH (Hardcoded secrets and unencrypted settings storage are the #1 source of credential leaks)**
+
+PocketBase stores every runtime-mutable setting (SMTP credentials, S3 keys, OAuth2 client secrets, JWT secrets for each auth collection) in the `_params` table as JSON. Admin UI edits write to the same place. There are two knobs that matter: (1) **how you read settings from Go/JS** - always via `app.Settings()` at call time, never captured at startup; (2) **how they are stored on disk** - set the `PB_ENCRYPTION` env var to a 32-char key so the whole blob is encrypted at rest. Without encryption, anyone with a copy of `data.db` has your SMTP password, OAuth2 secrets, and every collection's signing key.
+
+**Incorrect (hardcoded secret, captured at startup, unencrypted at rest):**
+
+```go
+// ❌ Secret compiled into the binary - leaks via `strings ./pocketbase`
+const slackWebhook = "https://hooks.slack.com/services/T00/B00/XXXX"
+
+// ❌ Captured once at startup - if an admin rotates the SMTP password via the
+//    UI, this stale value keeps trying until restart
+var smtpHost = app.Settings().SMTP.Host
+
+// ❌ No PB_ENCRYPTION set - `sqlite3 pb_data/data.db "SELECT * FROM _params"`
+//    prints every secret in plaintext
+./pocketbase serve
+```
+
+**Correct (env + settings lookup at call time + encryption at rest):**
+
+```bash
+# Generate a 32-char encryption key once and store it in your secrets manager
+# (1Password, SOPS, AWS SSM, etc). Commit NOTHING related to this value.
+openssl rand -hex 16    # 32 hex chars
+
+# Start with the key exported - PocketBase AES-encrypts _params on write
+# and decrypts on read. Losing the key == losing access to settings.
+export PB_ENCRYPTION="3a7c...deadbeef32charsexactly"
+./pocketbase serve
+```
+
+```go
+// Reading mutable settings at call time - reflects live UI changes
+func notifyAdmin(app core.App, msg string) error {
+    meta := app.Settings().Meta
+    from := mail.Address{Name: meta.SenderName, Address: meta.SenderAddress}
+    // ...
+}
+
+// Mutating settings programmatically (e.g. during a migration)
+settings := app.Settings()
+settings.Meta.AppName = "MyApp"
+settings.SMTP.Enabled = true
+settings.SMTP.Host = os.Getenv("SMTP_HOST") // inject from env at write time
+if err := app.Save(settings); err != nil {
+    return err
+}
+```
+
+```javascript
+// JSVM
+onBootstrap((e) => {
+    e.next();
+
+    const settings = $app.settings();
+    settings.meta.appName = "MyApp";
+    $app.save(settings);
+});
+
+// At send-time
+const meta = $app.settings().meta;
+```
+
+**Secrets that do NOT belong in `app.Settings()`:**
+
+- Database encryption key itself → `PB_ENCRYPTION` env var (not in the DB, obviously)
+- Third-party webhooks your code calls (Slack, Stripe, etc) → env vars, read via `os.Getenv` / `$os.getenv`
+- CI tokens, deploy keys → your secrets manager, not PocketBase
+
+`app.Settings()` is for things an **admin** should be able to rotate through the UI. Everything else lives in env vars, injected by your process supervisor (systemd, Docker, Kubernetes).
+
+**Key details:**
+- **`PB_ENCRYPTION` must be exactly 32 characters.** Anything else crashes at startup.
+- **Losing the key is unrecoverable** - the settings blob cannot be decrypted, and the server refuses to boot. Back up the key alongside (but separately from) your `pb_data` backups.
+- **Rotating the key**: start with the old key set, call `app.Settings()` → `app.Save(settings)` to re-encrypt under the new key, then restart with the new key. Do this under a maintenance window.
+- **Settings changes fire `OnSettingsReload`** - use it if you have in-memory state that depends on a setting (e.g. a rate limiter sized from `app.Settings().RateLimits.Default`).
+- **Do not call `app.Settings()` in a hot loop.** It returns a fresh copy each time. Cache for the duration of a single request, not the process.
+- **`app.Save(settings)`** persists and broadcasts the reload event. Mutating the returned struct without saving is a no-op.
+
+Reference: [Settings](https://pocketbase.io/docs/going-to-production/#use-encryption-for-the-pb_data-settings) · [OnSettingsReload hook](https://pocketbase.io/docs/go-event-hooks/#app-hooks)
+
+## 17. Test Hooks and Routes with tests.NewTestApp and ApiScenario
+
+**Impact: HIGH (Without the tests package you cannot exercise hooks, middleware, and transactions in isolation)**
+
+PocketBase ships a `tests` package specifically for integration-testing Go extensions. `tests.NewTestApp(testDataDir)` builds a fully-wired `core.App` over a **temp copy** of your test data directory, so you can register hooks, fire requests through the real router, and assert on the resulting DB state without spinning up a real HTTP server or touching `pb_data/`. The `tests.ApiScenario` struct drives the router the same way a real HTTP client would, including middleware and transactions. Curl-based shell tests cannot do either of these things.
+
+**Incorrect (hand-rolled HTTP client, shared dev DB, no hook reset):**
+
+```go
+// ❌ Hits the actual dev server - depends on side-effects from a previous run
+func TestCreatePost(t *testing.T) {
+    resp, _ := http.Post("http://localhost:8090/api/collections/posts/records",
+        "application/json",
+        strings.NewReader(`{"title":"hi"}`))
+    if resp.StatusCode != 200 {
+        t.Fatal("bad status")
+    }
+    // ❌ No DB assertion, no cleanup, no hook verification
+}
+```
+
+**Correct (NewTestApp + ApiScenario + AfterTestFunc assertions):**
+
+```go
+// internal/app/posts_test.go
+package app_test
+
+import (
+    "net/http"
+    "strings"
+    "testing"
+
+    "github.com/pocketbase/pocketbase/core"
+    "github.com/pocketbase/pocketbase/tests"
+
+    "myapp/internal/hooks" // your hook registration
+)
+
+// testDataDir is a checked-in pb_data snapshot with your collections.
+// Create it once with `./pocketbase --dir ./test_pb_data migrate up`
+// and commit it to your test fixtures.
+const testDataDir = "../../test_pb_data"
+
+func TestCreatePostFiresAudit(t *testing.T) {
+    // Each test gets its own copy of testDataDir - parallel-safe
+    app, err := tests.NewTestApp(testDataDir)
+    if err != nil {
+        t.Fatal(err)
+    }
+    defer app.Cleanup() // REQUIRED - removes the temp copy
+
+    // Register the hook under test against this isolated app
+    hooks.RegisterPostHooks(app)
+
+    scenario := tests.ApiScenario{
+        Name:   "POST /api/collections/posts/records as verified user",
+        Method: http.MethodPost,
+        URL:    "/api/collections/posts/records",
+        Body:   strings.NewReader(`{"title":"hello","slug":"hello"}`),
+        Headers: map[string]string{
+            "Authorization": testAuthHeader(app, "users", "alice@example.com"),
+            "Content-Type":  "application/json",
+        },
+        ExpectedStatus: 200,
+        ExpectedContent: []string{
+            `"title":"hello"`,
+            `"slug":"hello"`,
+        },
+        NotExpectedContent: []string{
+            `"internalNotes"`, // the enrich hook should hide this
+        },
+        ExpectedEvents: map[string]int{
+            "OnRecordCreateRequest":       1,
+            "OnRecordAfterCreateSuccess":  1,
+            "OnRecordEnrich":              1,
+        },
+        AfterTestFunc: func(t testing.TB, app *tests.TestApp, res *http.Response) {
+            // Assert side-effects in the DB using the SAME app instance
+            audits, err := app.FindRecordsByFilter(
+                "audit",
+                "action = 'post.create'",
+                "-created", 10, 0,
+            )
+            if err != nil {
+                t.Fatal(err)
+            }
+            if len(audits) != 1 {
+                t.Fatalf("expected 1 audit record, got %d", len(audits))
+            }
+        },
+        TestAppFactory: func(t testing.TB) *tests.TestApp { return app },
+    }
+
+    scenario.Test(t)
+}
+```
+
+**Table-driven variant (authz matrix):**
+
+```go
+func TestPostsListAuthz(t *testing.T) {
+    for _, tc := range []struct {
+        name   string
+        auth   string  // "", "users:alice", "users:bob", "_superusers:root"
+        expect int
+    }{
+        {"guest gets public posts",       "",                200},
+        {"authed gets own + public",      "users:alice",     200},
+        {"superuser sees everything",     "_superusers:root",200},
+    } {
+        t.Run(tc.name, func(t *testing.T) {
+            app, _ := tests.NewTestApp(testDataDir)
+            defer app.Cleanup()
+            hooks.RegisterPostHooks(app)
+
+            tests.ApiScenario{
+                Method:         http.MethodGet,
+                URL:            "/api/collections/posts/records",
+                Headers:        authHeaderFor(app, tc.auth),
+                ExpectedStatus: tc.expect,
+                TestAppFactory: func(t testing.TB) *tests.TestApp { return app },
+            }.Test(t)
+        })
+    }
+}
+```
+
+**Unit-testing a hook in isolation (no HTTP layer):**
+
+```go
+func TestAuditHookRollsBackOnAuditFailure(t *testing.T) {
+    app, _ := tests.NewTestApp(testDataDir)
+    defer app.Cleanup()
+    hooks.RegisterPostHooks(app)
+
+    // Delete the audit collection so the hook's Save fails
+    audit, _ := app.FindCollectionByNameOrId("audit")
+    _ = app.Delete(audit)
+
+    col, _ := app.FindCollectionByNameOrId("posts")
+    post := core.NewRecord(col)
+    post.Set("title", "should rollback")
+    post.Set("slug", "rollback")
+
+    if err := app.Save(post); err == nil {
+        t.Fatal("expected Save to fail because audit hook errored")
+    }
+
+    // Assert the post was NOT persisted (tx rolled back)
+    _, err := app.FindFirstRecordByFilter("posts", "slug = 'rollback'", nil)
+    if err == nil {
+        t.Fatal("post should not exist after rollback")
+    }
+}
+```
+
+**Rules:**
+- **Always `defer app.Cleanup()`** - otherwise temp directories leak under `/tmp`.
+- **Use a checked-in `test_pb_data/` fixture** with the collections you need. Do not depend on the dev `pb_data/` - tests must be hermetic.
+- **Register hooks against the test app**, not against a package-level `app` singleton. The test app is a fresh instance each time.
+- **`ExpectedEvents`** asserts that specific hooks fired the expected number of times - use it to catch "hook silently skipped because someone forgot `e.Next()`" regressions.
+- **`AfterTestFunc`** runs with the same app instance the scenario used, so you can query the DB to verify side-effects.
+- **Parallelize with `t.Parallel()`** - `NewTestApp` gives each goroutine its own copy, so there's no shared state.
+- **Tests run pure-Go SQLite** (`modernc.org/sqlite`) - no CGO, no extra setup, works on `go test ./...` out of the box.
+- **For JSVM**, there is no equivalent test harness yet - test pb_hooks by booting `tests.NewTestApp` with the `pb_hooks/` directory populated and exercising the router from Go. Pure-JS unit testing of hook bodies requires extracting the logic into a `require()`able module.
+
+Reference: [Testing](https://pocketbase.io/docs/go-testing/) · [tests package GoDoc](https://pkg.go.dev/github.com/pocketbase/pocketbase/tests)
+
+## 18. Use RunInTransaction with the Scoped txApp, Never the Outer App
 
 **Impact: CRITICAL (Mixing scoped and outer app inside a transaction silently deadlocks or writes outside the tx)**
 
